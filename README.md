@@ -49,6 +49,8 @@ Working. Single-player, endless waves, increasing difficulty. Text-mode renderin
 
 Sprite loading and rendering is delayed for after real-world playtesting using placeholder sprites.
 
+![Blopotron Spritesheet](blopotron_spritesheet.png)
+
 ## Why
 
 Over 10 years ago i started making ansi-colored utf-8 sprites for the classic game ROBOTRON 2084.  I wanted to make an old school BSD-style terminal game like `hunt`, `robots`, `trek` — small, self-contained games that ran on any terminal. 
