@@ -49,9 +49,7 @@ Sprite loading and rendering is delayed for after real-world playtesting using p
 
 ## Why
 
-Because writing a game that runs in a terminal is a purer exercise in game design than writing one that runs in a browser. No assets to produce, no shaders to tune, no layout engines to fight. Just characters, colors, and logic.
-
-This is the kind of project that existed in the BSD days — `hunt`, `robots`, `trek` — small, self-contained games that lived in `/usr/games` and ran on any terminal. No installers, no dependencies, no documentation beyond a man page.
+Over 10 years ago i started making ansi-colored utf-8 sprites for the classic game ROBOTRON 2084.  I wanted to make an old school BSD-style terminal game like `hunt`, `robots`, `trek` — small, self-contained games that ran on any terminal. 
 
 ## License
 
