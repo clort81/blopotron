@@ -56,3 +56,4 @@ This is the kind of project that existed in the BSD days — `hunt`, `robots`, `
 ## License
 
 FSL-1.1-MIT
+Accredation to clort + targeted help from GLM, Qwen and MiMo.
