@@ -55,4 +55,4 @@ This is the kind of project that existed in the BSD days — `hunt`, `robots`, `
 
 ## License
 
-The MIT license compatible with late.sh
+FSL-1.1-MIT
