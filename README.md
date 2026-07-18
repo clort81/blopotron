@@ -39,7 +39,7 @@ gcc -o blopotron blopotron47.c -lSDL2
 ./blopotron -t
 ```
 
-The `-t` flag spawns `sprite_bridge.py` as a subprocess and renders to stdout. Works over SSH, in tmux, or on a real BBS.
+The `-t` flag spawns `sprite_bridge.py` as a subprocess and renders to stdout. Works over SSH, in tmux, eventually on a real BBS.
 
 ## Status
 
