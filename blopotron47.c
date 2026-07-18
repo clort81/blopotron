@@ -62,9 +62,8 @@
 #include <string.h>
 #include <time.h>
 
-
 // ============================================================
-//  BLAPOTRON - Text Mode (sprite_bridge) support
+//  BLOPOTRON - Text Mode (sprite_bridge) support
 // ============================================================
 
 // --- Text Mode Globals ---
@@ -109,7 +108,8 @@ static int g_text_rows = 24;
 #define COLOR_BRIGHT_MAGENTA "\033[95m"
 #define COLOR_BRIGHT_CYAN    "\033[96m"
 #define COLOR_BRIGHT_WHITE   "\033[97m"
-
+#define SCORE_COLOR          "\x1b[92m" // lime green
+#define TEXT_COLOR           "\x1b[93m" // Bright yellow for instructions
 
 // ============================================================
 //  SPRITE DEFINITIONS AND MAPPING
@@ -131,6 +131,28 @@ typedef enum {
     SPRITE_CRUISE = 11,
     NUM_SPRITES
 } SpriteIndex;
+
+
+// Digit sprites 500-509 (0-9)
+// NOTE: No internal newlines (\n)! The bridge automatically wraps to the 
+// next row when the 'cols' limit (3) is reached. Internal newlines would 
+// split the command in the line-based stdin reader.
+// Digit sprites 500-509 (0-9), 3x3, no internal newlines
+
+static const char* digit_sprites[] = {
+    // 0:
+    "SPRITE,500,3,3,%s┏━┓┃┃┃┗━┛%s\n",
+    "SPRITE,501,3,3,%s╺┓  ┃ ╺┻╸%s\n",
+    "SPRITE,502,3,3,%s┏━┓┏━┛┗━╸%s\n",
+    "SPRITE,503,3,3,%s┏━┓╺━┫┗━┛%s\n",
+    "SPRITE,504,3,3,%s╻ ╻┗━┫  ╹%s\n",
+    "SPRITE,505,3,3,%s┏━╸┗━┓┗━┛%s\n",
+    "SPRITE,506,3,3,%s┏━┓┣━┓┗━┛%s\n",
+    "SPRITE,507,3,3,%s┏━┓  ┃  ╹%s\n",
+    "SPRITE,508,3,3,%s┏━┓┣━┫┗━┛%s\n",
+    "SPRITE,509,3,3,%s┏━┓┗━┫┗━┛%s\n"
+};
+static const char* press_1_sprite = "SPRITE,510,32,1,%sPress keyboard 1 to insert coin%s\n";
 
 // Sprite definitions - all enemy entities are 4x2, shots are 1x1
 static const char* g_text_sprites =
@@ -425,6 +447,9 @@ static void spawn_player(int16_t x, int16_t y);
 static void spawn_laser(int16_t x, int16_t y, int16_t vx, int16_t vy, Direction dir);
 static void clamp_to_screen(int16_t* x, int16_t* y, int sprite_w, int sprite_h);
 static int32_t dist_sq_world(int16_t x1, int16_t y1, int16_t x2, int16_t y2);
+static void play_level_intro(SDL_Renderer* r);
+static void play_level_intro_text(void);  
+static void render_insert_coin_text(void);
 
 // ============================================================
 //  LINKED LIST MANAGEMENT — g_next[]/g_prev[] are the single source of truth
@@ -1460,15 +1485,21 @@ static void draw_welcome(SDL_Renderer* r) {
 }
 
 static void welcome_screen(SDL_Renderer* r) {
-    //printf("\nEnter Coin to play (hit 1)\n");
-    draw_welcome(r);
+    // 1. Only call SDL drawing if we are NOT in text mode and renderer is valid
+    if (!g_text_mode && r) {
+        draw_welcome(r);
+    }
 
     int waiting = 1;
     while (waiting) {
         SDL_Event ev;
+        
+        // 2. Poll events (works fine even in text mode if a dummy/hidden SDL window exists)
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_KEYDOWN) {
-                if (ev.key.keysym.scancode == SDL_SCANCODE_1) waiting = 0;
+                if (ev.key.keysym.scancode == SDL_SCANCODE_1) {
+                    waiting = 0;
+                }
                 if (ev.key.keysym.sym == SDLK_ESCAPE) {
                     SDL_Quit();
                     exit(0);
@@ -1476,10 +1507,24 @@ static void welcome_screen(SDL_Renderer* r) {
             } else if (ev.type == SDL_QUIT) {
                 waiting = 0;
             } else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_EXPOSED) {
-                draw_welcome(r);
+                if (!g_text_mode && r) {
+                    draw_welcome(r);
+                }
             }
         }
-        SDL_Delay(16);
+
+        // 3. Render based on active mode
+        if (g_text_mode) {
+            render_insert_coin_text();
+            
+            // Sleep ~33ms for a smooth ~30fps in text mode
+            struct timespec ts = {0, 33000000}; 
+            nanosleep(&ts, NULL);
+        } else {
+            // Existing SDL rendering for the 3 colored boxes
+            draw_welcome(r); 
+            SDL_Delay(16); // ~60fps for SDL
+        }
     }
 }
 
@@ -1804,7 +1849,11 @@ static void check_level_complete(SDL_Renderer* r) {
             }
     }
     if (enemy_count == 0 && !g_game_over) {
-        play_level_intro(r);
+        if (g_text_mode) {
+            play_level_intro_text();
+        } else {
+            play_level_intro(r);
+        } 
         reset_level();
     }
 }
@@ -1877,29 +1926,199 @@ static void init_term_dims(void) {
 // ============================================================
 
 
-static void text_mode_init(void) {
+static void text_mode_initOLD(void) {
     init_term_dims();
-    g_text_out = popen("python3 sprite_bridge.py 2>sprite_bridge.log", "w"); // err to log!!!
+    g_text_out = popen("python3 sprite_bridge.py 2>sprite_bridge.log", "w");
     if (!g_text_out) {
         fprintf(stderr, "ERROR: Failed to spawn sprite_bridge.py\n");
         g_text_mode = false;
         return;
     }
-
-    // Send definitions immediately
+    
+    // Send existing sprite definitions
     fprintf(g_text_out, "%s", g_text_sprites);
-    // Clear screen and flush
+    
+    // Send digit sprites for score display
+    for (int i = 0; i < 10; i++) {
+        fprintf(g_text_out, digit_sprites[i], 
+                SCORE_COLOR, "\x1b[0m",
+                SCORE_COLOR, "\x1b[0m",
+                SCORE_COLOR, "\x1b[0m");
+    }
+    
+    // Initial screen clear
     fprintf(g_text_out, "CFLUSH\n");
+    fflush(g_text_out);
+}
+static void text_mode_init(void) {
+    init_term_dims();
+    g_text_out = popen("python3 sprite_bridge.py 2>sprite_bridge.log", "w");
+    if (!g_text_out) {
+        fprintf(stderr, "ERROR: Failed to spawn sprite_bridge.py\n");
+        g_text_mode = false;
+        return;
+    }
+    
+    // 1. Send existing game sprites
+    fprintf(g_text_out, "%s", g_text_sprites);
+    
+    // 2. Send digit sprites (500-509)
+    for (int i = 0; i < 10; i++) {
+        fprintf(g_text_out, digit_sprites[i], SCORE_COLOR, "\x1b[0m");
+    }
+    
+    // 3. Send instruction sprite (510)
+    fprintf(g_text_out, press_1_sprite, TEXT_COLOR, "\x1b[0m");
+    
+    fflush(g_text_out);
+}
+
+static void draw_score_text(int score) {
+    if (!g_text_out) return;
+    
+    // Convert score to string
+    char score_str[8];
+    snprintf(score_str, sizeof(score_str), "%d", score);
+    int len = strlen(score_str);
+    
+    // Right-align in 7-digit field
+    // Each digit is 3 chars wide, so 7 digits = 21 chars total
+    // Start position: column 6 + (7 - len) * 3
+    int start_col = 6 + (7 - len) * 3;
+    
+    // Draw each digit
+    for (int i = 0; i < len; i++) {
+        int digit = score_str[i] - '0';
+        int col = start_col + i * 3;
+        int row = 0;  // Top of screen
+        
+        // Sprite ID 500 + digit
+        fprintf(g_text_out, "DRAW,%d,900,%d,%d,0\n", 
+                500 + digit, col, row);
+    }
+}
+
+static void play_level_intro_text(void) {
+    if (!g_text_out) return;
+
+    // Bright ANSI colors matching the SDL palette
+    static const char* colors[12] = {
+        "\x1b[97m",          // White
+        "\x1b[95m",          // Magenta
+        "\x1b[91m",          // Red
+        "\x1b[38;5;208m",    // Orange
+        "\x1b[93m",          // Yellow
+        "\x1b[92m",          // Green
+        "\x1b[96m",          // Cyan
+        "\x1b[94m",          // Light Blue
+        "\x1b[34m",          // Blue
+        "\x1b[38;5;129m",    // Purple
+        "\x1b[95m",          // Magenta
+        "\x1b[97m"           // White
+    };
+
+    int cx = g_text_cols / 2;
+    int cy = g_text_rows / 2;
+    
+    // Expand slightly beyond screen bounds so it cleanly wipes the edges
+    int max_w = g_text_cols + 4;
+    int max_h = g_text_rows + 4;
+    
+    // 45 frames at ~30fps = 1.5 second animation
+    int frames = 45;
+    int num_boxes = 8; // 8 boxes with 1-char spacing looks great in text mode
+
+    for (int frame = 0; frame < frames; frame++) {
+        // 1. Clear the offscreen buffer (no terminal output yet)
+        fprintf(g_text_out, "CLEAR\n");
+
+        // 2. Calculate quadratic ease-in progress
+        int progress = (frame * 100) / frames;
+        int ease_progress = (progress * progress) / 100;
+        int current_w = (ease_progress * max_w) / 100;
+        int current_h = (ease_progress * max_h) / 100;
+
+        // 3. Draw concentric boxes from outside-in
+        for (int i = num_boxes - 1; i >= 0; i--) {
+            int offset = i; // 1 character spacing between boxes
+            int w = current_w - (offset * 2);
+            int h = current_h - (offset * 2);
+
+            if (w > 2 && h > 2) {
+                int x1 = cx - w / 2;
+                int y1 = cy - h / 2;
+                int x2 = x1 + w - 1;
+                int y2 = y1 + h - 1;
+
+                // Clamp to screen bounds
+                if (x1 < 0) x1 = 0;
+                if (y1 < 0) y1 = 0;
+                if (x2 >= g_text_cols) x2 = g_text_cols - 1;
+                if (y2 >= g_text_rows) y2 = g_text_rows - 1;
+
+                // Only draw if valid dimensions remain
+                if (x1 < x2 && y1 < y2) {
+                    // Type 1 = single line box, with ANSI color prefix
+                    fprintf(g_text_out, "BOX,%d,%d,%d,%d,1,%s\n", 
+                            x1, y1, x2, y2, colors[i % 12]);
+                }
+            }
+        }
+
+        // 4. Emit the frame to the terminal
+        fprintf(g_text_out, "FLUSH\n");
+        fflush(g_text_out);
+
+        // 5. Pace the animation (~32ms per frame = ~30fps)
+        struct timespec ts = {0, 32000000}; 
+        nanosleep(&ts, NULL);
+    }
+
+    // Final clear to transition cleanly into the actual gameplay frame
+    fprintf(g_text_out, "CLEAR\n");
+    fprintf(g_text_out, "FLUSH\n");
+    fflush(g_text_out);
+}
+
+static void render_insert_coin_text(void) {
+    if (!g_text_out) return;
+    
+    // 1. Clear buffer (Mode A: safe for frame skipping)
+    fprintf(g_text_out, "CLEAR\n");
+    
+    // 2. Draw digits 0-9 centered
+    // 10 digits * 3 cols = 30 cols wide, 3 rows high
+    int digit_w = 30;
+    int digit_h = 3;
+    int start_x = (g_text_cols - digit_w) / 2;
+    int start_y = (g_text_rows - digit_h) / 2;
+    
+    for (int i = 0; i < 10; i++) {
+        // Instance ID 900 reserved for score/digit display
+        fprintf(g_text_out, "DRAW,%d,900,%d,%d,0\n", 500 + i, start_x + (i * 3), start_y);
+    }
+    
+    // 3. Draw instruction text in lower middle
+    // 32 cols wide, 1 row high
+    int text_w = 32;
+    int text_x = (g_text_cols - text_w) / 2;
+    int text_y = g_text_rows - 4; // 4 rows from the bottom
+    
+    // Instance ID 901 reserved for this instruction
+    fprintf(g_text_out, "DRAW,510,901,%d,%d,0\n", text_x, text_y);
+    
+    // 4. Commit frame
+    fprintf(g_text_out, "FLUSH\n");
     fflush(g_text_out);
 }
 
 static void render_text_mode(void) {
     if (!g_text_out) return;
-
+    
     // 1. Clear the offscreen buffer ONLY. 
     // This resets the bridge's internal state without emitting to the terminal.
     fprintf(g_text_out, "CLEAR\n");
-    
+
     // 2. Draw player
     if (g_players[0].active && g_players[0].death_timer == 0) {
         Player* p = &g_players[0];
@@ -1907,9 +2126,9 @@ static void render_text_mode(void) {
         if (sprite_id >= 0) {
             int tx = (FIXED_TO_SCREEN(p->wx) * g_text_cols) / SCREEN_WIDTH;
             int ty = (FIXED_TO_SCREEN(p->wy) * g_text_rows) / SCREEN_HEIGHT;
-            if (tx < 0) tx = 0;
+            if (tx < 0) tx = 0; 
             if (ty < 0) ty = 0;
-            
+
             // Instance ID 0 is reserved for the player
             fprintf(g_text_out, "DRAW,%d,0,%d,%d,0\n", sprite_id, tx, ty);
         }
@@ -1932,7 +2151,29 @@ static void render_text_mode(void) {
         fprintf(g_text_out, "DRAW,%d,%d,%d,%d,0\n", sprite_id, idx, tx, ty);
     }
 
-    // 4. Commit the frame to the terminal. 
+    // 4. Draw score display (HUD OVERLAY)
+    // Unconditional: renders every time this function is called.
+    // Placed LAST so it overwrites any entities flying through the top-left corner.
+    {
+        char score_str[16];
+        snprintf(score_str, sizeof(score_str), "%d", g_score);
+        int len = strlen(score_str);
+        
+        // Right-align in 7-digit field (7 digits * 3 chars = 21 chars total width)
+        // Starting column: 6 + (7 - len) * 3
+        int start_col = 6 + (7 - len) * 3;
+        int row = 0;  // Top of screen
+        
+        // Draw each digit. Instance ID 900 is reserved for the score display.
+        // Sprite IDs 500-509 correspond to digits 0-9.
+        for (int i = 0; i < len; i++) {
+            int digit = score_str[i] - '0';
+            int col = start_col + i * 3;
+            fprintf(g_text_out, "DRAW,%d,900,%d,%d,0\n", 500 + digit, col, row);
+        }
+    }
+
+    // 5. Commit the frame to the terminal. 
     // THIS IS THE ONLY EMIT POINT. The bridge's skip logic hinges on this.
     fprintf(g_text_out, "FLUSH\n");
     fflush(g_text_out);
@@ -2120,7 +2361,12 @@ int main(int argc, char* argv[]) {
     }
 
     welcome_screen(renderer);
-    play_level_intro(renderer);
+    if (g_text_mode) {
+        play_level_intro_text();
+    } else {
+        play_level_intro(renderer);
+    } 
+    reset_level();
 
     int running = 1;
     Uint32 target_ms = 16;
@@ -2153,5 +2399,6 @@ int main(int argc, char* argv[]) {
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
+    printf("\nYour score: %d\n",g_score);
     return 0;
 }
