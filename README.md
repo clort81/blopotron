@@ -1,10 +1,12 @@
 # Blopotron
 
-![Blopotron Demo](blopotron-text.gif)
+![Blopotron Demo](blopotron-demo.gif)
 
 **WASD** to move. **IJKL** to shoot. That's it.
 
-Survive waves of enemies in a terminal. No tutorials, no cutscenes, no inventory. Just the groundbreaking ROBOTRON 2084 dual-joystick move+fire scheme, and an ever-growing swarm trying to kill you.
+Survive waves of enemies in a terminal. 
+No tutorials, no cutscenes, no inventory. Survive and score points. 
+An homage groundbreaking ROBOTRON 2084 dual-joystick arcade shooter.
 
 ---
 
