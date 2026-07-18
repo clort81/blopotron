@@ -4,7 +4,7 @@
 
 **WASD** to move. **IJKL** to shoot. That's it.
 
-Survive waves of enemies in a terminal. No tutorials, no cutscenes, no inventory. Just you, the duality-joystick scheme, and an ever-growing swarm trying to kill you.
+Survive waves of enemies in a terminal. No tutorials, no cutscenes, no inventory. Just the groundbreaking ROBOTRON 2084 dual-joystick move+fire scheme, and an ever-growing swarm trying to kill you.
 
 ---
 
@@ -12,25 +12,10 @@ Survive waves of enemies in a terminal. No tutorials, no cutscenes, no inventory
 
 A single-file C game (`blopotron47.c`) that runs in two modes:
 
-- **SDL mode**: Classic 2D rendering with procedural sprites
+- **SDL mode**: A development artefact - verify positions of sprites etc
 - **Text mode**: ANSI terminal rendering via [sprite_bridge.py](https://github.com/clort81/SpriteBridge)
 
-No game assets. No texture files. No config files. Everything is drawn from code.
-
-## The Idea
-
-Modern games ship with gigabytes of assets, engines, and build pipelines. This is the opposite: one C file, one dependency (SDL2 for graphics mode), and a Python script for terminal output.
-
-The goal is didactic — to show that a complete, playable game can fit in a single source file without external tools or asset pipelines. The kind of thing you could type into a VT100 in 1984 if you had the patience.
-
-## Features
-
-- **Robotron-style dual-joystick controls**: Move with WASD, shoot with IJKL
-- **Procedural sprites**: All graphics generated from code, no PNGs or tilemaps
-- **Text-mode rendering**: Play in any ANSI terminal via sprite_bridge.py
-- **Adaptive framerate**: Dynamic frame skipping for slow backends (BBS, SSH)
-- **Level transitions**: Zooming rainbow boxes between waves
-- **Enemy types**: Grunts, electrodes, spheroids, humans to rescue
+Currently ASCII-Only.  UTF-8 colored sprites are all made, but integration is WIP
 
 ## Controls
 
@@ -39,7 +24,8 @@ Movement:  W A S D
 Shooting:  I J K L
 ```
 
-Eight directions. Move and shoot independently. Classic dual-joystick scheme.
+Eight directions. Move and shoot independently.  Using SDL to combine keydowns with debouncing for diagonals.
+Eventual terminal play will need to have a direction key and seperate 'stop key' (e.g. the '5' on the NumPad).
 
 ## Building
 
@@ -59,7 +45,7 @@ The `-t` flag spawns `sprite_bridge.py` as a subprocess and renders to stdout. W
 
 Working. Single-player, endless waves, increasing difficulty. Text-mode rendering is functional but still being optimized for slow links.
 
-Not done. The BBS door integration (via [late.sh](https://github.com/mpiorowski/late-sh)) is in progress. Multiplayer is a maybe-someday.
+Sprite loading and rendering is delayed for after real-world playtesting using placeholder sprites.
 
 ## Why
 
@@ -67,8 +53,6 @@ Because writing a game that runs in a terminal is a purer exercise in game desig
 
 This is the kind of project that existed in the BSD days — `hunt`, `robots`, `trek` — small, self-contained games that lived in `/usr/games` and ran on any terminal. No installers, no dependencies, no documentation beyond a man page.
 
-If this is useful to you, fork it. If it isn't, that's fine too.
-
 ## License
 
-Public domain. Use it however you want.
+The MIT license compatible with late.sh
