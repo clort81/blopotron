@@ -51,16 +51,16 @@ Running ./blopotron with the `-t` flag spawns `sprite_bridge.py` as a subprocess
 ## Novel Concept: "Sub-Character Animation"
 
 **Sub-Character animation with Meta-Sprites:**
-A "Meta-Sprite" (msprite) is a higher-level abstraction that decouples the *logical* position of an entity in the game world from its *visual* representation on the terminal grid. Instead of a sprite being just a dumb grid of characters, a meta-sprite is a collection of frames, each tagged with semantic metadata:
-1. **Facing (0-8)**: Which of the 8 compass directions the sprite is oriented toward.
+A "Meta-Sprite" is just a collection of sprites (containing ansi-colored utf-8 art assets) with variants I call 'frames', each tagged with semantic metadata. The important ones to introduce are:
+1. **Facing (0-8)**: Which of the 8 compass directions the sprite is oriented toward. 0:None, 1: North, 2:NE ...
 2. **Halfstep (0-8)**: Whether this specific frame is designed to be rendered at an integer grid coordinate (0), or offset by 0.5 in a specific direction (1-8) to simulate sub-cell movement.
 
 **The Capability It Buys Us:**
-This enables **sub-cell resolution animation**. In traditional terminal games, an entity's Y-coordinate is an integer. Moving from row 4 to row 5 is an instantaneous, jerky "teleport." By introducing a "halfstep" frame, the game engine can say: *"The entity's logical Y-coordinate is 4.5. Therefore, render the halfstep frame."*
+This enables **sub-cell resolution animation**. In traditional terminal games, an entity's Y-coordinate is an integer. Moving from row 4 to row 5 is an instantaneous, jerky "teleport." By introducing a "halfstep" frame, the game engine can say: *"The entity's logical Y-coordinate is 4.45. Therefore, render the halfstep frame."*
 
-That halfstep frame is pre-drawn using half-block characters (like `▀` or `▄`) or clever color-bleeding techniques so that, when drawn at row 4, it visually appears to occupy the space *between* row 4 and row 5. Combined with 8-way facing, this allows entities to glide smoothly across the screen, with their visual representation interpolating seamlessly between grid cells, while the underlying game logic remains clean, tracking entity positions in higher resolution than the terminal's target-grid resolution.
+That halfstep frame is pre-drawn using half-block characters (like `▀` or `▄`) so that, when drawn at row 4, it visually appears to occupy the space *between* row 4 and row 5. This allows entities to glide smoothly across the screen; their visual representation interpolating seamlessly between grid cells.
 
-Enforcer with a second frame for display when game world position resolves to 'in between' two terminal rows.
+EXAMPLE: Enforcer with a second frame used when game world position resolves to 'in between' two terminal rows.
 
 ![Enforcer Halfstep](enforcer-halfstep.png)
 
