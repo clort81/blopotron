@@ -14,7 +14,7 @@ AI: No tutorials, no cutscenes, no inventory. Survive and score points.
 
 ## What This Be?
 
-A single-file C game Currently hitting the scales at [[44kB]]: ```44136 Jul 18 20:06 blopotron``` (`blopotron.c`) that runs in two modes:
+A single-file C game Currently hitting the scales at **[44kB]**: ```44136 Jul 18 20:06 blopotron``` that runs in two modes:
 
 - **SDL mode**: A development artefact - verify positions of sprites etc
 - **Text mode**: ANSI terminal rendering via [sprite_bridge.py](https://github.com/clort81/SpriteBridge)
