@@ -25,6 +25,10 @@ Uses a SpriteBridge backend renderer - emitting commands to stdout (utf-8) which
 
 WIP: [[NOT FINISHED]] [[UNDER CONSTRUCTION]] Currently working on utf8 sprite handling.
 
+For a more current-day and normie remake of Robotron 2084, see !(https://github.com/stridera/robotron2084gym)
+
+---
+
 ## Controls
 
 ```
