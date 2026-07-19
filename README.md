@@ -61,8 +61,9 @@ This enables **sub-cell resolution animation**. In traditional terminal games, a
 
 That halfstep frame is pre-drawn using half-block characters (like `▀` or `▄`) or clever color-bleeding techniques so that, when drawn at row 4, it visually appears to occupy the space *between* row 4 and row 5. Combined with 8-way facing, this allows entities to glide smoothly across the screen, with their visual representation interpolating seamlessly between grid cells, while the underlying game logic remains clean, tracking entity positions in higher resolution than the terminal's target-grid resolution.
 
-![Enforcer Halfstep](enforcer-halfstep.png)
 Enforcer with a second frame for display when game world position resolves to 'in between' two terminal rows.
+
+![Enforcer Halfstep](enforcer-halfstep.png)
 
 **Why It’s a Total Novelty in ANSI Terminal Games:**
 Historically, ANSI/ASCII games (like `NetHack`, `Rogue`, or classic BBS doors) are strictly **cell-bound**. An entity is either at `(X, Y)` or it isn't. There is no "in-between." Achieving smooth movement traditionally required either:
