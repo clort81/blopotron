@@ -72,7 +72,9 @@ The meta-sprite approach flips this. It pre-bakes the sub-cell offsets and direc
 
 ## Why Who What?
 
-Over 10 years ago i started making ansi-colored utf-8 sprites for the classic game ROBOTRON 2084.  I wanted to make an old school BSD-style terminal game like `hunt`, `robots`, `trek` — small, self-contained games that ran on any terminal. I wanted particularly to implement the idea of sub-character sprite animation in terminal arcade games.  This represents the product of thousands of (poorly optimized) hours of work towards that goal.
+Over 10 years ago i started making ansi-colored utf-8 sprites for the classic game ROBOTRON 2084.  I wanted to make an old school BSD-style terminal game like `hunt`, `robots`, `trek` — small, self-contained games that ran on any terminal. I wanted particularly to implement the idea of sub-character sprite animation in terminal arcade games.  
+
+This repository is a small reflectino of thousands of hours of experimentation and exploration towards that goal.
 
 ## License
 
