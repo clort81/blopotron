@@ -49,6 +49,25 @@ Working. Single-player, endless waves, increasing difficulty. Text-mode renderin
 
 Sprite loading and rendering is delayed for after real-world playtesting using placeholder sprites.
 
+## Novel Concept: "Sub-Character Animation"
+
+**Sub-Character animation with Meta-Sprites:**
+A "Meta-Sprite" (msprite) is a higher-level abstraction that decouples the *logical* position of an entity in the game world from its *visual* representation on the terminal grid. Instead of a sprite being just a dumb grid of characters, a meta-sprite is a collection of frames, each tagged with semantic metadata:
+1. **Facing (0-8)**: Which of the 8 compass directions the sprite is oriented toward.
+2. **Halfstep (0-8)**: Whether this specific frame is designed to be rendered at an integer grid coordinate (0), or offset by 0.5 in a specific direction (1-8) to simulate sub-cell movement.
+
+**The Capability It Buys Us:**
+This enables **sub-cell resolution animation**. In traditional terminal games, an entity's Y-coordinate is an integer. Moving from row 4 to row 5 is an instantaneous, jerky "teleport." By introducing a "halfstep" frame, the game engine can say: *"The entity's logical Y-coordinate is 4.5. Therefore, render the halfstep frame."*
+
+That halfstep frame is pre-drawn using half-block characters (like `▀` or `▄`) or clever color-bleeding techniques so that, when drawn at row 4, it visually appears to occupy the space *between* row 4 and row 5. Combined with 8-way facing, this allows entities to glide smoothly across the screen, with their visual representation interpolating seamlessly between grid cells, while the underlying game logic remains clean, tracking entity positions in higher resolution than the terminal's target-grid resolution.
+
+**Why It’s a Total Novelty in ANSI Terminal Games:**
+Historically, ANSI/ASCII games (like `NetHack`, `Rogue`, or classic BBS doors) are strictly **cell-bound**. An entity is either at `(X, Y)` or it isn't. There is no "in-between." Achieving smooth movement traditionally required either:
+1. Accepting jerky, grid-snapped movement.
+2. Writing incredibly complex, real-time ASCII morphing algorithms in the game loop.
+
+The meta-sprite approach flips this. It pre-bakes the sub-cell offsets and directional variants into the asset itself. The game loop doesn't need to do any complex ASCII manipulation; it just evaluates `facing` and `halfstep`, looks up the correct pre-rendered frame, and sends a single `DRAW` command. It brings the fluidity of vector or pixel-art sub-pixel rendering to the terminal, with zero runtime overhead. It is, effectively, **sub-pixel rendering for ASCII**.
+
 ![Blopotron Spritesheet](blopotron_spritesheet.png)
 
 ## Why
