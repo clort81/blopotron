@@ -2,9 +2,9 @@
 
 ![Blopotron Demo](blopotron-demo.gif)
 
-**WASD** to move. **IJKL** to shoot. That's it.
+**WASD** to move. **IJKL** to shoot.  Beat your old high score.
 
-Survive waves of enemies in a terminal. 
+Survive waves of enemies in a terminal, rescuing humans for points. 
 No tutorials, no cutscenes, no inventory. Survive and score points. 
 An homage groundbreaking ROBOTRON 2084 dual-joystick arcade shooter.
 
