@@ -23,7 +23,7 @@ Text-sprites are defined strings in a sprites.h header (or right in the .c).
 
 Uses a SpriteBridge backend renderer - emitting commands to stdout (utf-8) which gets redirected to stdin of the sprite_bridge.py process.  This is mostly done as an excercise in sysadmin-nearness, showing how text as a bridge format makes for nice easy inspectability, routing, data-mangling.
 
-WIP: [[NOT FINISHED]] [[UNDER CONSTRUCTION]] Currently working on utf8 sprite handling.
+- **WIP**: [[NOT FINISHED]] [[UNDER CONSTRUCTION]] Currently working on utf8 sprite handling.
 
 For a more current-day and normie remake of Robotron 2084, see ![Robotron2048Gym](https://github.com/stridera/robotron2084gym)
 
