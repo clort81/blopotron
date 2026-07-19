@@ -8,7 +8,7 @@ Survive waves of enemies in a terminal, rescuing humans for points.
 
 An homage to the incomparable dual-joystick arcade shooter; ![ROBOTRON 2084](https://en.wikipedia.org/wiki/Robotron:_2084).
 
-No tutorials, no cutscenes, no inventory. Survive and score points. 
+AI: No tutorials, no cutscenes, no inventory. Survive and score points. 
 
 ---
 
@@ -65,11 +65,9 @@ Enforcer with a second frame for display when game world position resolves to 'i
 ![Enforcer Halfstep](enforcer-halfstep.png)
 
 **Why It’s a Total Novelty in ANSI Terminal Games:**
-Historically, ANSI/ASCII games (like `NetHack`, `Rogue`, or classic BBS doors) are strictly **cell-bound**. An entity is either at `(X, Y)` or it isn't. There is no "in-between." Achieving smooth movement traditionally required either:
-1. Accepting jerky, grid-snapped movement.
-2. Writing incredibly complex, real-time ASCII morphing algorithms in the game loop.
+Historically, ANSI/ASCII games (like `NetHack`, `Rogue`, or classic BBS doors) are strictly **cell-bound**. An entity is either at `(X, Y)` or it isn't. There is no "in-between."
 
-The meta-sprite approach flips this. It pre-bakes the sub-cell offsets and directional variants into the asset itself. The game loop doesn't need to do any complex ASCII manipulation; it just evaluates `facing` and `halfstep`, looks up the correct pre-rendered frame, and sends a single `DRAW` command. It brings the fluidity of vector or pixel-art sub-pixel rendering to the terminal, with zero runtime overhead. It is, effectively, **sub-pixel rendering for ASCII**.
+By carefully drawing sprites to look identical or similar when shifted up/down (or left/right) We pre-bake the sub-cell offsets and directional variants into the asset itself. The game loop doesn't need to do any complex ASCII manipulation; it just evaluates `facing` and `halfstep`, looks up the correct pre-rendered frame, and sends a single `DRAW` command. It brings the fluidity of vector or pixel-art sub-pixel rendering to the terminal, with zero runtime overhead. It is, effectively, **sub-pixel rendering for ASCII**.
 
 ![Blopotron Spritesheet](blopotron_spritesheet.png)
 
@@ -77,7 +75,7 @@ The meta-sprite approach flips this. It pre-bakes the sub-cell offsets and direc
 
 Over 10 years ago i started making ansi-colored utf-8 sprites for the classic game ROBOTRON 2084.  I wanted to make an old school BSD-style terminal game like `hunt`, `robots`, `trek` — small, self-contained games that ran on any terminal. I wanted particularly to implement the idea of sub-character sprite animation in terminal arcade games.  
 
-This repository is a small reflectino of thousands of hours of experimentation and exploration towards that goal.
+This repository is a small shard broken off of thousands of hours of R&D (play) towards that goal.
 
 ## License
 
