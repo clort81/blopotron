@@ -48,12 +48,6 @@ gcc -O2 -o blopotron blopotron.c -lSDL2
 
 Running ./blopotron with the `-t` flag spawns `sprite_bridge.py` as a subprocess and renders to stdout. Works over SSH, in tmux, eventually on a real BBS with suitable player-input handling.
 
-## Status
-
-Working. Single-player, endless waves, increasing difficulty. Text-mode rendering is functional but still being optimized for slow links.
-
-Sprite loading and rendering is delayed for after real-world playtesting using placeholder sprites.
-
 ## Novel Concept: "Sub-Character Animation"
 
 **Sub-Character animation with Meta-Sprites:**
