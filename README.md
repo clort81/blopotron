@@ -5,8 +5,11 @@
 **WASD** to move. **IJKL** to shoot.  Beat your old high score.
 
 Survive waves of enemies in a terminal, rescuing humans for points. 
+
+An homage to the incomparable dual-joystick arcade shooter; ![ROBOTRON 2084](https://en.wikipedia.org/wiki/Robotron:_2084).
+
 No tutorials, no cutscenes, no inventory. Survive and score points. 
-An homage groundbreaking ROBOTRON 2084 dual-joystick arcade shooter.
+
 
 ---
 
