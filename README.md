@@ -32,16 +32,14 @@ Eventual terminal play will need to have a direction key and seperate 'stop key'
 ## Building
 
 ```bash
-# SDL mode (graphics)
-gcc -o blopotron blopotron47.c -lSDL2
-./blopotron
+# Debug 
+gcc -g -Wall -O0 -o blopotron-dbg blopotron.c -lSDL2
 
 # Text mode (terminal)
-gcc -o blopotron blopotron47.c -lSDL2
-./blopotron -t
+gcc -O2 -o blopotron blopotron.c -lSDL2
 ```
 
-The `-t` flag spawns `sprite_bridge.py` as a subprocess and renders to stdout. Works over SSH, in tmux, eventually on a real BBS.
+Running ./blopotron with the `-t` flag spawns `sprite_bridge.py` as a subprocess and renders to stdout. Works over SSH, in tmux, eventually on a real BBS with suitable player-input handling.
 
 ## Status
 
