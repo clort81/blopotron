@@ -28,6 +28,7 @@ WIP: [[NOT FINISHED]] [[UNDER CONSTRUCTION]] Currently working on utf8 sprite ha
 ## Controls
 
 ```
+Insert Coin: 1
 Movement:  W A S D
 Shooting:  I J K L
 ```
