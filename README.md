@@ -1,4 +1,4 @@
-# Blopotron
+# Blopotron: Terminal Arcade Game
 
 ![Blopotron Demo](blopotron-demo.gif)
 
