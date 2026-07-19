@@ -10,16 +10,18 @@ An homage to the incomparable dual-joystick arcade shooter; ![ROBOTRON 2084](htt
 
 No tutorials, no cutscenes, no inventory. Survive and score points. 
 
-Currently hitting the scales at [[44kB]]: ```44136 Jul 18 20:06 blopotron```
-
 ---
 
-## What This Is More Really?
+## What This Be?
 
-A single-file C game (`blopotron.c`) that runs in two modes:
+A single-file C game Currently hitting the scales at [[44kB]]: ```44136 Jul 18 20:06 blopotron``` (`blopotron.c`) that runs in two modes:
 
 - **SDL mode**: A development artefact - verify positions of sprites etc
 - **Text mode**: ANSI terminal rendering via [sprite_bridge.py](https://github.com/clort81/SpriteBridge)
+
+Text-sprites are defined strings in a sprites.h header (or right in the .c).
+
+Uses a SpriteBridge backend renderer - emitting commands to stdout (utf-8) which gets redirected to stdin of the sprite_bridge.py process.  This is mostly done as an excercise in sysadmin-nearness, showing how text as a bridge format makes for nice easy inspectability, routing, data-mangling.
 
 WIP: [[NOT FINISHED]] [[UNDER CONSTRUCTION]] Currently working on utf8 sprite handling.
 
