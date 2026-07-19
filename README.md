@@ -10,10 +10,11 @@ An homage to the incomparable dual-joystick arcade shooter; ![ROBOTRON 2084](htt
 
 No tutorials, no cutscenes, no inventory. Survive and score points. 
 
+Currently hitting the scales at [[44kB]]: ```44136 Jul 18 20:06 blopotron```
 
 ---
 
-## What This Is
+## What This Is More Really?
 
 A single-file C game (`blopotron.c`) that runs in two modes:
 
