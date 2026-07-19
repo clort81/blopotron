@@ -12,7 +12,7 @@ An homage groundbreaking ROBOTRON 2084 dual-joystick arcade shooter.
 
 ## What This Is
 
-A single-file C game (`blopotron47.c`) that runs in two modes:
+A single-file C game (`blopotron.c`) that runs in two modes:
 
 - **SDL mode**: A development artefact - verify positions of sprites etc
 - **Text mode**: ANSI terminal rendering via [sprite_bridge.py](https://github.com/clort81/SpriteBridge)
