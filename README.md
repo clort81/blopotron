@@ -17,7 +17,7 @@ A single-file C game (`blopotron47.c`) that runs in two modes:
 - **SDL mode**: A development artefact - verify positions of sprites etc
 - **Text mode**: ANSI terminal rendering via [sprite_bridge.py](https://github.com/clort81/SpriteBridge)
 
-Currently ASCII-Only.  UTF-8 colored sprites are all made, but integration is WIP
+WIP: [[NOT FINISHED]] [[UNDER CONSTRUCTION]] Currently working on utf8 sprite handling.
 
 ## Controls
 
