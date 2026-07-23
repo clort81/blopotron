@@ -1,77 +1,57 @@
 # Blopotron: Terminal Arcade Game
+![blopotron](blopotron2026.gif)
 
-![Blopotron Demo](blopotron-demo.gif)
+A pure terminal, single-file C Robotron-style shooter. [WIP]
 
-**WASD** to move. **IJKL** to shoot.  Beat your old high score.
+Survive waves of enemies in your terminal. No tutorials, no cutscenes, no inventory, and no external graphics libraries. Just you, the dual-joystick scheme, and an ever-growing swarm trying to kill you.
 
-Survive waves of enemies in a terminal, rescuing humans for points. 
+## What This Is
+A single-file C game that runs entirely in the ANSI terminal. It features a custom, high-performance offscreen text buffer engine that renders smooth, half-step sub-pixel motion using UTF-8 box-drawing characters. 
 
-An homage to the incomparable dual-joystick arcade shooter; ![ROBOTRON 2084](https://en.wikipedia.org/wiki/Robotron:_2084).
+No game assets. No texture files. No Python bridges. No SDL. Everything is drawn directly from code to `stdout`.
 
-AI: No tutorials, no cutscenes, no inventory. Survive and score points. 
+## The Idea
+Modern games ship with gigabytes of assets, engines, and build pipelines. This is the opposite: one C file, zero external dependencies, and a custom rendering pipeline. 
 
----
+The goal is didactic — to show that a complete, playable, smooth-framerate game can fit in a single source file without external tools. The kind of thing you could compile and run on any POSIX system in 1984.
 
-## What This Be?
-
-A single-file C game Currently hitting the scales at **[44kB]**: ```44136 Jul 18 20:06 blopotron``` that runs in two modes:
-
-- **SDL mode**: A development artefact - verify positions of sprites etc
-- **Text mode**: ANSI terminal rendering via [sprite_bridge.py](https://github.com/clort81/SpriteBridge)
-
-Text-sprites are defined strings in a sprites.h header (or right in the .c).
-
-***Text mode*** uses a SpriteBridge backend renderer - emitting commands to stdout (utf-8) which gets redirected to stdin of the sprite_bridge.py process.  This is mostly done as an excercise in oldschool unix message passing, showing how text as a bridge format makes for nice easy inspectability, routing, data-mangling.
-
-**WIP**: [[NOT FINISHED]] [[UNDER CONSTRUCTION]] Currently working on utf8 sprite handling for each entity.
-
-For a more current-day and normie remake of Robotron 2084, see ![Robotron2048Gym](https://github.com/stridera/robotron2084gym)
-
----
+## Features
+- **Pure Terminal Rendering**: No SDL, no `sprite_bridge.py`. Direct ANSI escape code and UTF-8 output.
+- **Half-Step Quantization**: Smooth sub-pixel entity movement rendered using 1/2-step UTF-8 block characters (`█`, `▌`, `▐`, `▄`, `▀`, `▗`, `▖`, `▝`, `▘`).
+- **Decal System**: 
+  - *Floor Decals*: Grey/white pulsing `╳` marks left behind when a Hulk crushes a human.
+  - *Overlay Decals*: Rainbow color-cycling score popups (e.g., "1000", "5000") that appear when humans are rescued.
+- **Advanced HUD**: 7-digit green box-drawing score display (top-left) and right-aligned white player life icons (top-right, capped at 10).
+- **Spatial Grid Optimization**: Fast $O(1)$ neighborhood lookups for collision detection and AI targeting.
+- **Classic Enemy Behaviors**: Grunts swarm, Hulks chase and crush humans, Spheroids retreat to corners to spawn Enforcers, and Enforcers orbit while firing Terrors.
 
 ## Controls
+The game uses an "autorun" movement scheme and continuous autofire, eliminating the need to hold down multiple keys simultaneously.
 
-```
-Insert Coin: 1
-Movement:  W A S D
-Shooting:  I J K L
-```
+**Movement** (Autorun):
+- `W` : Up
+- `X` : Down
+- `A` : Left
+- `D` : Right
+- `Q`, `E`, `Z`, `C` : Diagonals (Up-Left, Up-Right, Down-Left, Down-Right)
+- `S` : Stop movement
 
-Eight directions. Move and shoot independently.  Using SDL to combine keydowns with debouncing for diagonals.
-Eventual terminal play will need to have a direction key and seperate 'stop key' (e.g. the '5' on the NumPad).
+**Shooting** (Continuous Autofire):
+- `Numpad 7, 8, 9, 4, 6, 1, 2, 3` : Fire continuously in the chosen direction.
+- `Numpad 5` : Stop firing.
+
+*(Note: Because this uses raw terminal input, your terminal emulator must be configured to send repeated key events when a key is held down, which is the default behavior on most modern systems.)*
 
 ## Building
+Requires a standard C compiler (GCC or Clang) and the math library.
 
 ```bash
-# Debug 
-gcc -g -Wall -O0 -o blopotron-dbg blopotron.c -lSDL2
+# Compile with optimizations and warnings
+gcc -O2 -Wall bta.c -o bta -lm
 
-# Text mode (terminal)
-gcc -O2 -o blopotron blopotron.c -lSDL2
-```
+# Run the game
 
-Running ./blopotron with the `-t` flag spawns `sprite_bridge.py` as a subprocess and renders to stdout. Works over SSH, in tmux, eventually on a real BBS with suitable player-input handling.
-
-## Novel Concept: "Sub-Character Animation"
-
-**Sub-Character animation with Meta-Sprites:**
-A "Meta-Sprite" is just a collection of sprites (containing ansi-colored utf-8 art assets) with variants I call 'frames', each tagged with semantic metadata. The important ones to introduce are:
-1. **Facing (0-8)**: Which of the 8 compass directions the sprite is oriented toward. 0:None, 1: North, 2:NE ...
-2. **Halfstep (0-8)**: Whether this specific frame is designed to be rendered at an integer grid coordinate (0), or offset by 0.5 in a specific direction (1-8) to simulate sub-cell movement.
-
-**The Capability It Buys Us:**
-This enables **sub-cell resolution animation**. In traditional terminal games, an entity's Y-coordinate is an integer. Moving from row 4 to row 5 is an instantaneous, jerky "teleport." By introducing a "halfstep" frame, the game engine can say: *"The entity's logical Y-coordinate is 4.45. Therefore, render the halfstep frame."*
-
-That halfstep frame is pre-drawn using half-block characters (like `▀` or `▄`) so that, when drawn at row 4, it visually appears to occupy the space *between* row 4 and row 5. This allows entities to glide smoothly across the screen; their visual representation interpolating seamlessly between grid cells.
-
-EXAMPLE: Enforcer with a second frame used when game world position resolves to 'in between' two terminal rows.
-
-![Enforcer Halfstep](enforcer-halfstep.png)
-
-**Why It’s a Total Novelty in ANSI Terminal Games:**
-Historically, ANSI/ASCII games (like `NetHack`, `Rogue`, or classic BBS doors) are strictly **cell-bound**. An entity is either at `(X, Y)` or it isn't. There is no "in-between."
-
-By carefully drawing sprites to look identical or similar when shifted up/down (or left/right) We pre-bake the sub-cell offsets and directional variants into the asset itself. The game loop doesn't need to do any complex ASCII manipulation; it just evaluates `facing` and `halfstep`, looks up the correct pre-rendered frame, and sends a single `DRAW` command. It brings the fluidity of vector or pixel-art sub-pixel rendering to the terminal, with zero runtime overhead. It is, effectively, **sub-pixel rendering for ASCII**.
+./bta
 
 ![Blopotron Spritesheet](blopotron_spritesheet.png)
 
