@@ -40,7 +40,7 @@ The game uses an "autorun" movement scheme and continuous autofire, eliminating 
 - `Numpad 7, 8, 9, 4, 6, 1, 2, 3` : Fire continuously in the chosen direction.
 - `Numpad 5` : Stop firing.
 
-*(Note: Because this uses raw terminal input, your terminal emulator must be configured to send repeated key events when a key is held down, which is the default behavior on most modern systems.)*
+*(Note: Because this uses raw terminal input, the game does not track keydown and keyup events. You will need to learn to move and stop moving with 's' and stop firing with '5')*
 
 ## Building
 Requires a standard C compiler (GCC or Clang) and the math library.
@@ -52,8 +52,11 @@ gcc -O2 -Wall bta.c -o bta -lm
 # Run the game
 
 ./bta
+```
+## TODO: 
 
-![Blopotron Spritesheet](blopotron_spritesheet.png)
+Brains and their cruise missiles.  Tanks, Quarks, Progs.   This game will not attempt to duplicate robotron2084 gameplay but offer something similar.
+![blopotron spritesheet](blopotron_spritesheet.png)
 
 ## Why Who What?
 
