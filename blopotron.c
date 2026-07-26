@@ -1,8 +1,8 @@
 /*
 // ============================================================
-//  Blapotron 2024 terminal robotron-like game: ver. 0.60
+//  Blopotron 2024 terminal robotron-like game: ver. 0.60
 //  Pure Terminal Mode - No SDL Dependencies
-//  gcc -O2 -Wall bta.c -o bta -lm
+//  gcc -O2 -Wall blopotron.c -o blopotron -lm
 // ============================================================
 */
 #include <stdio.h>
