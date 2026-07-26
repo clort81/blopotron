@@ -1772,19 +1772,19 @@ static void render_all(void) {
             switch (e->type) {
                 case ENT_GRUNT:     cr=178; cg= 34; cb= 34; break; /* brick-red */
                 case ENT_HULK:      cr=  0; cg=200; cb=  0; break; /* green */
-                case ENT_SPHEROID:  cr=255; cg=165; cb=  0; break; /* orange */
+                case ENT_SPHEROID:  cr=255; cg=145; cb=  0; break; /* orange */
                 case ENT_ENFORCER:  cr=200; cg= 50; cb=150; break; /* reddish purple */
                 case ENT_LASER:     cr=255; cg=255; cb=  0; break; /* yellow */
                 case ENT_TERROR:    cr=180; cg=  0; cb=255; break; /* violet/purple */
                 case ENT_QUARK:     cr=255; cg= 60; cb= 60; break; /* red */
                 case ENT_BRAIN:     cr=180; cg=  0; cb=180; break; /* magenta */
-                case ENT_ELECTRODE: cr=120; cg=120; cb=255; break; /* blue */
+                case ENT_ELECTRODE: cr=235; cg=185; cb= 50; break; /* yellow-orange */
                 case ENT_CRUISE:    cr=  0; cg=200; cb=200; break; /* cyan */
                 case ENT_HUMAN: {
                     static const uint8_t hc[3][3] = {
                         {255,182,193}, /* mommy: pink */
                         {173,216,230}, /* daddy: light blue */
-                        {255,218,185}  /* mikey: peach */
+                        {255,208,145}  /* mikey: peach */
                     };
                     int ht = e->human_type;
                     if (ht<0||ht>2) ht=0;
