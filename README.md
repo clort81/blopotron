@@ -1,5 +1,5 @@
 # Blopotron: Terminal Arcade Game
-![blopotron](blopotron2026.gif)
+![blopotron](blopotron2026b.gif)
 
 A pure terminal, single-file C Robotron-style shooter. [WIP]
 
