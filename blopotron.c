@@ -1,58 +1,3 @@
-// ============================================================
-//  Blapotron 2024 terminal robotron-like 1-2p game: ver. 0.41
-// 
-//  gcc -O2 -Wall robotron40.c -o robotron -lSDL2 -lm
-// 
-//  ./robotron  or ./robotron -n to start at level n
-// ============================================================
-/* main()
-  ├── SDL_Init + create window/renderer (800×600)
-  ├── Parse argv[1] → start_level (clamped 1–40, default 1)
-  ├── restart_game(start_level)
-  │     └── reset globals, spawn_player(center), g_level=start-1
-  │           └── reset_level()
-  │                 ├── g_level++, find_safe_spawn() for player position
-  │                 ├── Wave lookup: g_waves[(g_level−1) % 40]
-  │                 ├── Spawn entities via SPAWN_WITH_SAFETY (up to 50 attempts, is_position_safe)
-  │                 └── Spawns grunts, electrodes, hulks, brains, spheroids, quarks, humans(mommy/daddy/mikey)
-  ├── play_level_intro(renderer)  // 90 frames of expanding nested colored rectangles
-  └── Main loop (60fps target):
-        ├── Poll events: SDL_QUIT → exit; ESCAPE → exit; game over key → exit
-        ├── update_all()
-        │     ├── Early return if g_show_game_over
-        │     ├── Handle death_timer / respawn via find_safe_spawn(), set invulnerable + ghost timers
-        │     ├── Decrement invulnerable_timer, ghost_timer
-        │     └── If !game_over:
-        │           ├── update_player(): WASD move (diagonal norm), IJKL shoot (buffer+cooldown)
-        │           ├── rebuild_grid()  ← NEW: rebuild spatial grid each frame
-        │           ├── update_entities(): walk linked list
-        │           │     ├── Hulks: pushback timer special case
-        │           │     ├── Grunts: phase-offset tick → ai_grunt()
-        │           │     └── Others: normal tick counter dispatch
-        │           ├── process_collisions()  ← NOW USES GRID
-        │           │     ├── Laser vs Enemy: swept collision → hulk pushback / kill+score
-        │           │     ├── Hulk vs Human: kills human
-        │           │     ├── Terror vs Player: damage player, set ghost position
-        │           │     ├── Player vs Entity: rescue humans (score) or take damage from enemies
-        │           │     └── Backward pass removes marked entities via remove_entity()
-        │           └── check_level_complete(): if no killable enemies left → play_level_intro + reset_level
-        └── render_all()
-              ├── Clear black, draw_hud (lives squares, game over overlay)
-              ├── Draw player: death shrink animation or normal with invuln flash
-              └── Walk linked list: draw each active entity
-
-  Utility helpers used throughout:
-    clamp_to_screen(), dist_sq_world(), get_wall_bitmask(),
-    fixed_mul(), find_safe_spawn(), spawn_entity()/spawn_player()/spawn_laser()
-
-  Linked-list entity pool + spatial grid (FIXED):
-    - g_entities[]: entity pool (MAX_ENTITIES slots)
-    - g_next[], g_prev[]: linked list pointers (single source of truth)
-    - g_grid_heads[]: per-cell head pointers (GRID_COLS × GRID_ROWS)
-    - g_grid_nodes[]: grid node pool (one per entity)
-    - g_grid_free: grid node free list head
-    - Entity struct has NO next/prev fields — arrays are the truth
-*/
 /*
 // ============================================================
 //  Blapotron 2024 terminal robotron-like game: ver. 0.60
@@ -113,6 +58,7 @@
 #define GHOST_TIMER         180
 #define CRUISE_SPEED        (3 * COORD_SCALE)
 #define CRUISE_BODY_LEN     5
+#define CHORDING_WINDOW_FRAMES 6
 
 // ============================================================
 //  STRUCT DEFINITIONS
@@ -132,6 +78,35 @@ typedef struct {
     uint8_t r, g, b, a;
     const char* name;
 } SpriteData;
+
+// One frame of text-art sprite data.
+typedef struct {
+    const uint8_t* const* rows;  /* h row pointers */
+    int w, h;                   /* dimensions in text cells */
+    int ox, oy;                 /* placement offset in screen pixels */
+} SpriteFrame;
+
+// Per-facing animation descriptor.
+typedef struct {
+    int start;        /* index into frames[] where this facing begins */
+    int count;        /* number of frames in this facing's walk cycle */
+    int step_period;  /* game ticks between frame advances */
+} FacingInfo;
+
+// Top-level sprite definition: one per entity type.
+typedef struct {
+    const char* name;
+    int total_frames;
+    const SpriteFrame* frames;
+    FacingInfo facing[4];  /* N=0, S=1, E=2, W=3 -- matches Direction enum */
+} SpriteSet;
+
+// Shorthand to get the pixel width/height of an entity from its sprite.
+/* Collision dimensions in fixed-point (match wx/wy units).
+   sprite_fallback_w/h holds screen-pixel sizes set at spawn time;
+   SCREEN_TO_FIXED converts to the fixed-point coordinate system. */
+#define ENTITY_W(e) SCREEN_TO_FIXED((e)->sprite_fallback_w)
+#define ENTITY_H(e) SCREEN_TO_FIXED((e)->sprite_fallback_h)
 
 typedef struct {
     int16_t wx, wy, tx, ty;
@@ -160,7 +135,10 @@ typedef struct {
     int pushback_timer;
     int human_type;
     EntityType type;
-    const SpriteData* sprite;
+    const SpriteSet* anim;      /* sprite animation set (NULL = use fallback) */
+    int anim_counter;          /* tick counter for frame advance */
+    int sprite_fallback_w;     /* width in screen pixels (used when anim is NULL) */
+    int sprite_fallback_h;     /* height in screen pixels */
     bool active;
     bool onscreen;
 } Entity;
@@ -171,13 +149,18 @@ typedef struct {
     int lives;
     bool active;
     EntityType type;
-    const SpriteData* sprite;
+    const SpriteSet* anim;
+    int anim_counter;
+    int sprite_fallback_w;
+    int sprite_fallback_h;
     int death_timer;
     int invulnerable_timer;
     int16_t ghost_x, ghost_y;
     int ghost_timer;
     int shot_buffer_timer;
     int shot_pending_vx, shot_pending_vy;
+    int facing_dir;        /* current facing (Direction enum) */
+    int anim_frame;        /* current frame within facing */
 } Player;
 
 typedef struct {
@@ -187,6 +170,7 @@ typedef struct {
 typedef struct {
     char glyph[4];             // UTF-8 character (up to 3 bytes + null terminator)
     unsigned char r, g, b;     // Foreground RGB
+    unsigned char br, bg, bb;  // Background RGB
 } TextCell;
 
 // ============================================================
@@ -266,6 +250,33 @@ static int g_autofire_vy = 0;
 static int g_autorun_vx = 0;
 static int g_autorun_vy = 0;
 
+// --- Keychording: rapid two-keypress diagonal fire ---
+typedef struct { int k1, k2, vx, vy; } ChordEntry;
+static int g_chord_prev_key   = -1;
+static int g_chord_prev_frame = -999;
+static const ChordEntry g_chord_table[] = {
+    /* middle pad */
+    { 'i', 'j', -1, -1 },   /* NW */
+    { 'i', 'l',  1, -1 },   /* NE */
+    { ',', 'j', -1,  1 },   /* SW */
+    { ',', 'l',  1,  1 },   /* SE */
+    /* right pad */
+    { '8', '4', -1, -1 },   /* NW */
+    { '8', '6',  1, -1 },   /* NE */
+    { '2', '4', -1,  1 },   /* SW */
+    { '2', '6',  1,  1 },   /* SE */
+};
+#define NUM_CHORDS 8
+static int g_move_chord_prev_key   = -1;
+static int g_move_chord_prev_frame = -999;
+static const ChordEntry g_move_chord_table[] = {
+    { 'w', 'a', -1, -1 },   /* NW */
+    { 'w', 'd',  1, -1 },   /* NE */
+    { 'x', 'a', -1,  1 },   /* SW */
+    { 'x', 'd',  1,  1 },   /* SE */
+};
+#define NUM_MOVE_CHORDS 4
+
 static const LevelWave g_waves[40] = {
     { 5,  2,  0,  0, 0, 0, 1, 1, 0}, {17, 15,  5,  0, 1, 0, 1, 1, 1},
     {22, 25,  6,  0, 3, 0, 2, 2, 2}, {34, 25,  7,  0, 4, 0, 2, 2, 2},
@@ -296,6 +307,8 @@ static int g_cruise_body_len[MAX_ENTITIES];
 static int g_term_cols = 132;
 static int g_term_rows = 50;
 
+static int scorebump = 0;  // 0-100, decays each frame, boosts score color toward white
+
 static Entity g_entities[MAX_ENTITIES];
 static int16_t g_next[MAX_ENTITIES];
 static int16_t g_prev[MAX_ENTITIES];
@@ -315,6 +328,7 @@ static bool g_remove_enemy[MAX_ENTITIES];
 
 // Terminal Input State (replaces SDL_GetKeyboardState)
 static uint8_t g_keys[256] = {0};
+static uint8_t g_keys_prev[256] = {0};
 
 
 // Text Buffer
@@ -329,19 +343,55 @@ static GridNode g_grid_nodes[MAX_ENTITIES];
 static int16_t g_grid_heads[GRID_COLS * GRID_ROWS];
 static int16_t g_grid_free;
 
-// Sprites
-static const SpriteData sprite_player    = {20, 20, 255, 255, 255, 255, "Player"};
-static const SpriteData sprite_human     = {12, 18, 255, 200, 200, 255, "Human"};
-static const SpriteData sprite_grunt     = {18, 18, 220,  55,  55, 255, "Grunt"};
-static const SpriteData sprite_hulk      = {24, 24,   0, 255,   0, 255, "Hulk"};
-static const SpriteData sprite_spheroid  = {18, 18, 255, 127,   0, 255, "Spheroid"};
-static const SpriteData sprite_enforcer  = {20, 20, 255,   0,   0, 255, "Enforcer"};
-static const SpriteData sprite_quark     = {20, 20, 255,   0, 255, 255, "Quark"};
-static const SpriteData sprite_brain     = {22, 22, 255, 255,   0, 255, "Brain"};
-static const SpriteData sprite_laser     = { 8,  8, 255, 255,   0, 255, "Laser"};
-static const SpriteData sprite_terror    = {10, 10, 255,   0, 255, 255, "Terror"};
-static const SpriteData sprite_cruise    = { 4,  4,   0, 235, 255, 255, "Cruise"};
-static const SpriteData sprite_electrode = {16, 16, 255, 200,   0, 255, "Electrode"};
+// --- Pixel dimensions for each entity type (used for collision, clamping, spawning) ---
+// Order matches EntityType enum: Player, Grunt, Quark, Hulk, Brain, Spheroid, Enforcer, Human, Laser, Terror, Electrode, Cruise
+static const int sprite_pixel_w[NUM_ENTITY_TYPES] = {
+    20, 18, 20, 24, 22, 18, 20, 10, 8, 10, 16, 4
+};
+static const int sprite_pixel_h[NUM_ENTITY_TYPES] = {
+    20, 18, 20, 24, 22, 18, 20, 22, 8, 10, 16, 4
+};
+#define PLAYER_SPRITE_W 20
+#define PLAYER_SPRITE_H 20
+#define LASER_SPRITE_W   8
+#define LASER_SPRITE_H   8
+
+// --- Stub frames: one 1x1 blank cell per entity type ---
+// Placeholders until real sprite art is loaded from sprites.h.
+static const uint8_t stub_cell_blank[10] = {
+    ' ', 0, 0, 0,           /* space glyph, null-padded */
+    0xff, 0xff, 0xff,       /* fg white */
+    0x00, 0x00, 0x00        /* bg black */
+};
+static const uint8_t* const stub_frame_rows[1] = { stub_cell_blank };
+static const SpriteFrame stub_frames[] = {
+    { stub_frame_rows, 1, 1, 0, 0 },  /* [0]  Player */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* [1]  Grunt */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* [2]  Quark */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* [3]  Hulk */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* [4]  Brain */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* [5]  Spheroid */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* [6]  Enforcer */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* [7]  Human */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* [8]  Laser */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* [9]  Terror */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* [10] Electrode */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* [11] Cruise */
+};
+// --- Stub SpriteSet definitions ---
+// Facing: N S E W -- all point to frame 0, count=1, no animation.
+static const SpriteSet sprite_player_set    = { "Player",    1, &stub_frames[0],  {{0,1,6},{0,1,6},{0,1,6},{0,1,6}} };
+static const SpriteSet sprite_grunt_set     = { "Grunt",     1, &stub_frames[1],  {{0,1,8},{0,1,8},{0,1,8},{0,1,8}} };
+static const SpriteSet sprite_quark_set     = { "Quark",     1, &stub_frames[2],  {{0,1,4},{0,1,4},{0,1,4},{0,1,4}} };
+static const SpriteSet sprite_hulk_set      = { "Hulk",      1, &stub_frames[3],  {{0,1,4},{0,1,4},{0,1,4},{0,1,4}} };
+static const SpriteSet sprite_brain_set     = { "Brain",     1, &stub_frames[4],  {{0,1,4},{0,1,4},{0,1,4},{0,1,4}} };
+static const SpriteSet sprite_spheroid_set  = { "Spheroid",  1, &stub_frames[5],  {{0,1,2},{0,1,2},{0,1,2},{0,1,2}} };
+static const SpriteSet sprite_enforcer_set  = { "Enforcer",  1, &stub_frames[6],  {{0,1,2},{0,1,2},{0,1,2},{0,1,2}} };
+static const SpriteSet sprite_human_set     = { "Human",     1, &stub_frames[7],  {{0,1,4},{0,1,4},{0,1,4},{0,1,4}} };
+static const SpriteSet sprite_laser_set     = { "Laser",     1, &stub_frames[8],  {{0,1,1},{0,1,1},{0,1,1},{0,1,1}} };
+static const SpriteSet sprite_terror_set    = { "Terror",    1, &stub_frames[9],  {{0,1,1},{0,1,1},{0,1,1},{0,1,1}} };
+static const SpriteSet sprite_electrode_set = { "Electrode", 1, &stub_frames[10], {{0,1,1},{0,1,1},{0,1,1},{0,1,1}} };
+static const SpriteSet sprite_cruise_set    = { "Cruise",    1, &stub_frames[11], {{0,1,1},{0,1,1},{0,1,1},{0,1,1}} };
 
 // Forward declarations
 static Entity* spawn_entity(int16_t x, int16_t y, EntityType type);
@@ -468,6 +518,9 @@ static void clear_text_buffer(void) {
             text_buffer[idx].r = 0;
             text_buffer[idx].g = 0;
             text_buffer[idx].b = 0;
+            text_buffer[idx].br = 0;
+            text_buffer[idx].bg = 0;
+            text_buffer[idx].bb = 0;
         }
     }
 }
@@ -596,12 +649,17 @@ static void flush_text_buffer(void) {
     if (!text_buffer) return;
     printf("\x1b[H");
     unsigned char last_r = 255, last_g = 255, last_b = 255;
+    unsigned char last_br = 0, last_bg = 0, last_bb = 0;
     for (int y = 0; y < g_term_rows; y++) {
         for (int x = 0; x < g_term_cols; x++) {
             TextCell cell = text_buffer[y * g_term_cols + x];
             if (cell.r != last_r || cell.g != last_g || cell.b != last_b) {
                 printf("\x1b[38;2;%d;%d;%dm", cell.r, cell.g, cell.b);
                 last_r = cell.r; last_g = cell.g; last_b = cell.b;
+            }
+            if (cell.br != last_br || cell.bg != last_bg || cell.bb != last_bb) {
+                printf("\x1b[48;2;%d;%d;%dm", cell.br, cell.bg, cell.bb);
+                last_br = cell.br; last_bg = cell.bg; last_bb = cell.bb;
             }
             printf("%s", cell.glyph);
         }
@@ -615,6 +673,7 @@ static void flush_text_buffer(void) {
 //  INPUT POLLING (replaces SDL_GetKeyboardState)
 // ============================================================
 static void poll_input(void) {
+    memcpy(g_keys_prev, g_keys, sizeof(g_keys));
     memset(g_keys, 0, sizeof(g_keys));
     fd_set set;
     struct timeval timeout = {0, 0};
@@ -631,6 +690,20 @@ static void poll_input(void) {
 // ============================================================
 //  HELPER FUNCTIONS
 // ============================================================
+static bool check_any_key_pressed(void) {
+    fd_set set;
+    struct timeval tv = {0, 0}; // Zero timeout = non-blocking poll
+    FD_ZERO(&set);
+    FD_SET(STDIN_FILENO, &set);
+    
+    if (select(STDIN_FILENO + 1, &set, NULL, NULL, &tv) > 0) {
+        char ch;
+        read(STDIN_FILENO, &ch, 1); // Consume the single byte, guaranteed not to block
+        return true;
+    }
+    return false;
+}
+
 static void clamp_to_screen(int16_t* x, int16_t* y, int sprite_w, int sprite_h) {
     int16_t max_x = SCREEN_TO_FIXED(SCREEN_WIDTH - sprite_w);
     int16_t max_y = SCREEN_TO_FIXED(SCREEN_HEIGHT - sprite_h);
@@ -648,8 +721,8 @@ static int32_t dist_sq_world(int16_t x1, int16_t y1, int16_t x2, int16_t y2) {
 
 static int get_wall_bitmask(Entity* e) {
     int mask = 0;
-    int max_x = SCREEN_TO_FIXED(SCREEN_WIDTH) - SCREEN_TO_FIXED(e->sprite->width);
-    int max_y = SCREEN_TO_FIXED(SCREEN_HEIGHT) - SCREEN_TO_FIXED(e->sprite->height);
+    int max_x = SCREEN_TO_FIXED(SCREEN_WIDTH) - ENTITY_W(e);
+    int max_y = SCREEN_TO_FIXED(SCREEN_HEIGHT) - ENTITY_H(e);
     int margin = SCREEN_TO_FIXED(WALL_MARGIN);
     if (e->wx <= margin) mask |= WALL_LEFT;
     if (e->wx >= max_x - margin) mask |= WALL_RIGHT;
@@ -681,7 +754,7 @@ static bool find_safe_spawn(int16_t* out_x, int16_t* out_y) {
         for (int dir = 0; dir < 8; dir++) {
             int16_t tx = cx + (int16_t)(((step * 48) * COORD_SCALE) * ((dir == 0 || dir == 1 || dir == 7) ? 1 : (dir == 3 || dir == 4 || dir == 5) ? -1 : 0));
             int16_t ty = cy + (int16_t)(((step * 48) * COORD_SCALE) * ((dir == 1 || dir == 2 || dir == 3) ? 1 : (dir == 5 || dir == 6 || dir == 7) ? -1 : 0));
-            clamp_to_screen(&tx, &ty, sprite_player.width, sprite_player.height);
+            clamp_to_screen(&tx, &ty, PLAYER_SPRITE_W, PLAYER_SPRITE_H);
             safe = true;
             for (int16_t idx = g_list_head; idx != -1; idx = g_next[idx]) {
                 Entity* e = &g_entities[idx];
@@ -705,8 +778,8 @@ static int get_dir_from_vel(int16_t vx, int16_t vy) {
 static int16_t fixed_mul(int16_t a, int16_t b) { return (int16_t)(((int32_t)a * (int32_t)b) / 16384); }
 
 static bool check_swept_collision(Entity* laser, Entity* enemy) {
-    int16_t e_min_x = enemy->wx, e_max_x = enemy->wx + SCREEN_TO_FIXED(enemy->sprite->width);
-    int16_t e_min_y = enemy->wy, e_max_y = enemy->wy + SCREEN_TO_FIXED(enemy->sprite->height);
+    int16_t e_min_x = enemy->wx, e_max_x = enemy->wx + ENTITY_W(enemy);
+    int16_t e_min_y = enemy->wy, e_max_y = enemy->wy + ENTITY_H(enemy);
     for (int i = 0; i <= 8; i++) {
         int16_t cx = laser->wx + (laser->vx * i) / 8;
         int16_t cy = laser->wy + (laser->vy * i) / 8;
@@ -716,18 +789,18 @@ static bool check_swept_collision(Entity* laser, Entity* enemy) {
 }
 
 static bool check_player_enemy_collision(Player* p, Entity* e) {
-    int16_t p_min_x = p->wx, p_max_x = p->wx + SCREEN_TO_FIXED(p->sprite->width);
-    int16_t p_min_y = p->wy, p_max_y = p->wy + SCREEN_TO_FIXED(p->sprite->height);
-    int16_t e_min_x = e->wx, e_max_x = e->wx + SCREEN_TO_FIXED(e->sprite->width);
-    int16_t e_min_y = e->wy, e_max_y = e->wy + SCREEN_TO_FIXED(e->sprite->height);
+    int16_t p_min_x = p->wx, p_max_x = p->wx + SCREEN_TO_FIXED(p->sprite_fallback_w);
+    int16_t p_min_y = p->wy, p_max_y = p->wy + SCREEN_TO_FIXED(p->sprite_fallback_h);
+    int16_t e_min_x = e->wx, e_max_x = e->wx + ENTITY_W(e);
+    int16_t e_min_y = e->wy, e_max_y = e->wy + ENTITY_H(e);
     return (p_min_x < e_max_x && p_max_x > e_min_x && p_min_y < e_max_y && p_max_y > e_min_y);
 }
 
 static bool check_entity_entity_collision(Entity* a, Entity* b) {
-    int16_t a_min_x = a->wx, a_max_x = a->wx + SCREEN_TO_FIXED(a->sprite->width);
-    int16_t a_min_y = a->wy, a_max_y = a->wy + SCREEN_TO_FIXED(a->sprite->height);
-    int16_t b_min_x = b->wx, b_max_x = b->wx + SCREEN_TO_FIXED(b->sprite->width);
-    int16_t b_min_y = b->wy, b_max_y = b->wy + SCREEN_TO_FIXED(b->sprite->height);
+    int16_t a_min_x = a->wx, a_max_x = a->wx + ENTITY_W(a);
+    int16_t a_min_y = a->wy, a_max_y = a->wy + ENTITY_H(a);
+    int16_t b_min_x = b->wx, b_max_x = b->wx + ENTITY_W(b);
+    int16_t b_min_y = b->wy, b_max_y = b->wy + ENTITY_H(b);
     return (a_min_x < b_max_x && a_max_x > b_min_x && 
             a_min_y < b_max_y && a_max_y > b_min_y);
 }
@@ -947,20 +1020,21 @@ static Entity* spawn_entity(int16_t wx, int16_t wy, EntityType type) {
     e->wx = wx; e->wy = wy; e->tx = 0; e->ty = 0; e->vx = 0; e->vy = 0;
     e->target_idx = -1; e->target_period = 0; e->target_counter = 0; e->type = type;
     e->tick_period = 1; e->tick_counter = 0; e->tick_phase = 0; e->active = true;
-    e->attitude_counter = 0; e->anim_frame = 0; e->facing_dir = DIR_DOWN; e->move_dir = DIR_DOWN;
+    e->attitude_counter = 0; e->anim_frame = 0; e->anim_counter = 0; e->facing_dir = DIR_DOWN; e->move_dir = DIR_DOWN;
+    e->anim = NULL; e->sprite_fallback_w = sprite_pixel_w[type]; e->sprite_fallback_h = sprite_pixel_h[type];
     e->age = 0; e->pushback_timer = 0; e->human_type = 0; e->spawn_count = 0; e->fire_phase = 0;
     switch (type) {
-        case ENT_HUMAN: e->sprite = &sprite_human; e->tick_period = 2; e->attitude_period = 128; e->attitude_counter = 128; e->human_type = rand() % 3; break;
-        case ENT_GRUNT: e->sprite = &sprite_grunt; e->tick_period = 23; e->tick_phase = rand() % e->tick_period; break;
-        case ENT_HULK: e->sprite = &sprite_hulk; e->tick_period = 4; e->attitude_period = 45; e->attitude_counter = rand() % e->attitude_period; e->target_entity = -1; e->target_period = 8; e->target_counter = 0; break;
-        case ENT_SPHEROID: e->sprite = &sprite_spheroid; e->tick_period = 2; e->attitude_period = 4; e->attitude_counter = rand() % 4; e->fire_period = 128; e->fire_counter = 128; e->spawn_count = 0; e->spawn_max = 4; e->state = SPHEROID_STATE_MOVE; e->target_counter = 0; e->target_period = SPHEROID_WINDUP_TICKS; { int corner = rand() % 4; switch (corner) { case 0: e->mtgx = 0; e->mtgy = 0; break; case 1: e->mtgx = SCREEN_TO_FIXED(SCREEN_WIDTH); e->mtgy = 0; break; case 2: e->mtgx = 0; e->mtgy = SCREEN_TO_FIXED(SCREEN_HEIGHT); break; case 3: e->mtgx = SCREEN_TO_FIXED(SCREEN_WIDTH); e->mtgy = SCREEN_TO_FIXED(SCREEN_HEIGHT); break; } int16_t dx = e->mtgx - e->wx, dy = e->mtgy - e->wy; int32_t dist = abs(dx) + abs(dy); if (dist == 0) dist = 1; int16_t sspd = SPHEROID_SPEED * COORD_SCALE; e->vx = (int16_t)(((int32_t)dx * sspd) / dist); e->vy = (int16_t)(((int32_t)dy * sspd) / dist); } break;
-        case ENT_ENFORCER: e->sprite = &sprite_enforcer; e->attitude_period = 20; e->attitude_counter = 20; e->fire_period = 40; e->fire_counter = 40; e->tick_period = 2; e->tick_phase = 0; { int mask = get_wall_bitmask(e); int16_t speed = ENFORCER_SPEED * COORD_SCALE; e->vx = speed + rand() % speed * (((mask & WALL_LEFT) != 0) - ((mask & WALL_RIGHT) != 0)); e->vy = speed + rand() % speed * (((mask & WALL_TOP) != 0) - ((mask & WALL_BOTTOM) != 0)); } break;
-        case ENT_BRAIN: e->sprite = &sprite_brain; e->tick_period = 4; e->tick_phase = rand() % e->tick_period; e->tick_counter = e->tick_period; e->attitude_period = 32; e->attitude_counter = e->attitude_period; e->fire_period = 32 + (rand() % 32); break;
-        case ENT_CRUISE: e->sprite = &sprite_cruise; e->tick_period = 1; e->attitude_counter = 20; break;
-        case ENT_TERROR: e->sprite = &sprite_terror; e->tick_period = 1; break;
-        case ENT_LASER: e->sprite = &sprite_laser; e->tick_period = 1; break;
-        case ENT_ELECTRODE: e->sprite = &sprite_electrode; e->tick_period = 9999999; break;
-        case ENT_QUARK: e->sprite = &sprite_quark; e->tick_period = 4; break;
+        case ENT_HUMAN: e->anim = &sprite_human_set; e->tick_period = 2; e->attitude_period = 128; e->attitude_counter = 128; e->human_type = rand() % 3; break;
+        case ENT_GRUNT: e->anim = &sprite_grunt_set; e->tick_period = 23; e->tick_phase = rand() % e->tick_period; break;
+        case ENT_HULK: e->anim = &sprite_hulk_set; e->tick_period = 4; e->attitude_period = 45; e->attitude_counter = rand() % e->attitude_period; e->target_entity = -1; e->target_period = 8; e->target_counter = 0; break;
+        case ENT_SPHEROID: e->anim = &sprite_spheroid_set; e->tick_period = 2; e->attitude_period = 4; e->attitude_counter = rand() % 4; e->fire_period = 128; e->fire_counter = 128; e->spawn_count = 0; e->spawn_max = 4; e->state = SPHEROID_STATE_MOVE; e->target_counter = 0; e->target_period = SPHEROID_WINDUP_TICKS; { int corner = rand() % 4; switch (corner) { case 0: e->mtgx = 0; e->mtgy = 0; break; case 1: e->mtgx = SCREEN_TO_FIXED(SCREEN_WIDTH); e->mtgy = 0; break; case 2: e->mtgx = 0; e->mtgy = SCREEN_TO_FIXED(SCREEN_HEIGHT); break; case 3: e->mtgx = SCREEN_TO_FIXED(SCREEN_WIDTH); e->mtgy = SCREEN_TO_FIXED(SCREEN_HEIGHT); break; } int16_t dx = e->mtgx - e->wx, dy = e->mtgy - e->wy; int32_t dist = abs(dx) + abs(dy); if (dist == 0) dist = 1; int16_t sspd = SPHEROID_SPEED * COORD_SCALE; e->vx = (int16_t)(((int32_t)dx * sspd) / dist); e->vy = (int16_t)(((int32_t)dy * sspd) / dist); } break;
+        case ENT_ENFORCER: e->anim = &sprite_enforcer_set; e->attitude_period = 20; e->attitude_counter = 20; e->fire_period = 40; e->fire_counter = 40; e->tick_period = 2; e->tick_phase = 0; { int mask = get_wall_bitmask(e); int16_t speed = ENFORCER_SPEED * COORD_SCALE; e->vx = speed + rand() % speed * (((mask & WALL_LEFT) != 0) - ((mask & WALL_RIGHT) != 0)); e->vy = speed + rand() % speed * (((mask & WALL_TOP) != 0) - ((mask & WALL_BOTTOM) != 0)); } break;
+        case ENT_BRAIN: e->anim = &sprite_brain_set; e->tick_period = 4; e->tick_phase = rand() % e->tick_period; e->tick_counter = e->tick_period; e->attitude_period = 32; e->attitude_counter = e->attitude_period; e->fire_period = 32 + (rand() % 32); break;
+        case ENT_CRUISE: e->anim = &sprite_cruise_set; e->tick_period = 1; e->attitude_counter = 20; break;
+        case ENT_TERROR: e->anim = &sprite_terror_set; e->tick_period = 1; break;
+        case ENT_LASER: e->anim = &sprite_laser_set; e->tick_period = 1; break;
+        case ENT_ELECTRODE: e->anim = &sprite_electrode_set; e->tick_period = 9999999; break;
+        case ENT_QUARK: e->anim = &sprite_quark_set; e->tick_period = 4; break;
         default: e->active = false; free_entity(idx); return NULL;
     }
     link_entity(idx); return e;
@@ -970,9 +1044,10 @@ static void spawn_player(int16_t wx, int16_t wy) {
     if (g_player_count >= MAX_PLAYERS) return;
     Player* p = &g_players[g_player_count++];
     p->wx = wx; p->wy = wy; p->vx = 0; p->vy = 0; p->type = ENT_PLAYER;
-    p->sprite = &sprite_player; p->active = true; p->lives = PLAYER_LIVES;
+    p->anim = &sprite_player_set; p->anim_counter = 0; p->sprite_fallback_w = PLAYER_SPRITE_W; p->sprite_fallback_h = PLAYER_SPRITE_H; p->active = true; p->lives = PLAYER_LIVES;
     p->death_timer = 0; p->invulnerable_timer = 0; p->ghost_x = 0; p->ghost_y = 0;
     p->ghost_timer = 0; p->shot_buffer_timer = 0; p->shot_pending_vx = 0; p->shot_pending_vy = 0;
+    p->facing_dir = DIR_DOWN; p->anim_frame = 0;
 }
 
 static void spawn_laser(int16_t x, int16_t y, int16_t vx, int16_t vy, Direction dir) {
@@ -993,6 +1068,7 @@ static void reset_level(void) {
     int16_t spawn_x, spawn_y; find_safe_spawn(&spawn_x, &spawn_y);
     g_players[0].wx = spawn_x; g_players[0].wy = spawn_y; g_players[0].vx = 0; g_players[0].vy = 0; g_players[0].death_timer = 0;
     g_level++;
+    g_rescue_count = 0;   /* reset human-rescue streak at start of each wave */
     int wave_idx = (g_level - 1) % 40;
     const LevelWave* w = &g_waves[wave_idx];
     #define SPAWN_WITH_SAFETY(count, type) for (int _i = 0; _i < (count); _i++) { int _attempts = 0; int16_t _x, _y; do { _x = rand() % SCREEN_TO_FIXED(SCREEN_WIDTH); _y = rand() % SCREEN_TO_FIXED(SCREEN_HEIGHT); _attempts++; if (_attempts > 50) break; } while (!is_position_safe(_x, _y)); spawn_entity(_x, _y, (type)); }
@@ -1153,6 +1229,33 @@ static void update_player(Player* p) {
     CHECK_RUN('z', -1,  1) // Down-Left
     CHECK_RUN('c',  1,  1) // Down-Right
     
+    // --- Movement keychording: rapid same-pad cardinal pairs ---
+    {
+        int chord_hit = 0;
+        for (int c = 0; c < NUM_MOVE_CHORDS && !chord_hit; c++) {
+            int k1 = g_move_chord_table[c].k1, k2 = g_move_chord_table[c].k2;
+            if ((g_keys[k1] && !g_keys_prev[k1] && g_move_chord_prev_key == k2) ||
+                (g_keys[k2] && !g_keys_prev[k2] && g_move_chord_prev_key == k1)) {
+                if ((g_frame_count - g_move_chord_prev_frame) <= CHORDING_WINDOW_FRAMES) {
+                    run_vx = g_move_chord_table[c].vx;
+                    run_vy = g_move_chord_table[c].vy;
+                    run_pressed = true;
+                    chord_hit = 1;
+                } 
+            } 
+        }
+        if (chord_hit) {
+            g_move_chord_prev_key = -1;
+        } else {  
+            for (int c = 0; c < NUM_MOVE_CHORDS; c++) {
+                int k1 = g_move_chord_table[c].k1, k2 = g_move_chord_table[c].k2;
+                if (g_keys[k1] && !g_keys_prev[k1]) { 
+                    g_move_chord_prev_key = k1; g_move_chord_prev_frame = g_frame_count; break; }
+                if (g_keys[k2] && !g_keys_prev[k2]) { 
+                    g_move_chord_prev_key = k2; g_move_chord_prev_frame = g_frame_count; break; }
+            } 
+        }
+    }
     // 's' stops autorun
     if (g_keys['s']) {
         g_autorun_vx = 0;
@@ -1171,17 +1274,33 @@ static void update_player(Player* p) {
         p->vx = fixed_mul(p->vx, FIXED_0_707); 
         p->vy = fixed_mul(p->vy, FIXED_0_707); 
     }
-
-    // 2. Firing Input (Autofire via Numpad / Number Row)
-    // 7 8 9
-    // 4 5 6
-    // 1 2 3
+    // Update facing direction from movement
+    if (g_autorun_vx != 0 || g_autorun_vy != 0) {
+        p->facing_dir = get_dir_from_vel(p->vx, p->vy);
+    }
+    // Advance player sprite animation
+    if (p->anim && (g_autorun_vx != 0 || g_autorun_vy != 0)) {
+        const FacingInfo* fi = &p->anim->facing[p->facing_dir];
+        if (++p->anim_counter >= fi->step_period) {
+            p->anim_counter = 0;
+            p->anim_frame = (p->anim_frame + 1) % fi->count;
+        }
+    }
+    // 2. Firing Input (Autofire via Numpad OR Synonym Keys)
+    // Numpad:  7 8 9
+    //          4 5 6
+    //          1 2 3
+    // Synonyms:u i o
+    //          j k l
+    //          m , .
+    
     int fire_vx = 0, fire_vy = 0;
     bool fire_pressed = false;
     
     #define CHECK_FIRE(key, dx, dy) \
         if (g_keys[(unsigned char)(key)]) { fire_vx = dx; fire_vy = dy; fire_pressed = true; }
     
+    // Numpad keys
     CHECK_FIRE('7', -1, -1)
     CHECK_FIRE('8',  0, -1)
     CHECK_FIRE('9',  1, -1)
@@ -1191,15 +1310,53 @@ static void update_player(Player* p) {
     CHECK_FIRE('2',  0,  1)
     CHECK_FIRE('3',  1,  1)
     
-    // 5 turns off autofire
-    if (g_keys['5']) {
+    // Synonym keys (for keyboards without numpads)
+    CHECK_FIRE('u', -1, -1)  // maps to 7
+    CHECK_FIRE('i',  0, -1)  // maps to 8
+    CHECK_FIRE('o',  1, -1)  // maps to 9
+    CHECK_FIRE('j', -1,  0)  // maps to 4
+    CHECK_FIRE('l',  1,  0)  // maps to 6
+    CHECK_FIRE('m', -1,  1)  // maps to 1
+    CHECK_FIRE(',',  0,  1)  // maps to 2
+    CHECK_FIRE('.',  1,  1)  // maps to 3
+    
+    // --- Keychording: diagonal from two rapid same-pad cardinal keypresses ---
+    {
+        int chord_hit = 0;
+        for (int c = 0; c < NUM_CHORDS && !chord_hit; c++) {
+            int k1 = g_chord_table[c].k1, k2 = g_chord_table[c].k2;
+            if ((g_keys[k1] && !g_keys_prev[k1] && g_chord_prev_key == k2) ||
+                (g_keys[k2] && !g_keys_prev[k2] && g_chord_prev_key == k1)) {
+                if ((g_frame_count - g_chord_prev_frame) <= CHORDING_WINDOW_FRAMES) {
+                    fire_vx = g_chord_table[c].vx;
+                    fire_vy = g_chord_table[c].vy;
+                    fire_pressed = true;
+                    chord_hit = 1;
+                }
+            }
+        }
+        if (chord_hit) {
+            g_chord_prev_key = -1;
+        } else {
+            for (int c = 0; c < NUM_CHORDS; c++) {
+                int k1 = g_chord_table[c].k1, k2 = g_chord_table[c].k2;
+                if (g_keys[k1] && !g_keys_prev[k1]) {
+                    g_chord_prev_key = k1; g_chord_prev_frame = g_frame_count; break; }
+                if (g_keys[k2] && !g_keys_prev[k2]) {
+                    g_chord_prev_key = k2; g_chord_prev_frame = g_frame_count; break; }
+            }
+        }
+    }
+    
+    // '5' or 'k' turns off autofire
+    if (g_keys['5'] || g_keys['k']) {
         g_autofire_vx = 0;
         g_autofire_vy = 0;
     } else if (fire_pressed) {
         g_autofire_vx = fire_vx;
         g_autofire_vy = fire_vy;
     }
-    
+
     bool any_fire = (g_autofire_vx != 0 || g_autofire_vy != 0);
     
     // 3. Continuous Firing Logic
@@ -1216,22 +1373,22 @@ static void update_player(Player* p) {
         
         if (pvx != 0 || pvy != 0) {
             Direction dir = get_dir_from_vel(pvx, pvy);
-            spawn_laser(p->wx + SCREEN_TO_FIXED(sprite_player.width/2) - SCREEN_TO_FIXED(sprite_laser.width/2),
-                        p->wy + SCREEN_TO_FIXED(sprite_player.height/2) - SCREEN_TO_FIXED(sprite_laser.height/2),
+    spawn_laser(p->wx + SCREEN_TO_FIXED(PLAYER_SPRITE_W/2) - SCREEN_TO_FIXED(LASER_SPRITE_W/2),
+                        p->wy + SCREEN_TO_FIXED(PLAYER_SPRITE_H/2) - SCREEN_TO_FIXED(LASER_SPRITE_H/2),
                         pvx, pvy, dir);
             fire_cooldown = FIRE_COOLDOWN;
         }
     }
     
     p->wx += p->vx; p->wy += p->vy;
-    clamp_to_screen(&p->wx, &p->wy, p->sprite->width, p->sprite->height);
+    clamp_to_screen(&p->wx, &p->wy, p->sprite_fallback_w, p->sprite_fallback_h);
 }
 
 static void update_entities(void) {
     for (int16_t idx = g_list_head; idx != -1; ) {
         int16_t next_idx = g_next[idx]; Entity* e = &g_entities[idx];
         if (!e->active) { idx = next_idx; continue; }
-        if (e->type == ENT_HULK && e->pushback_timer > 0) { e->pushback_timer--; e->wx += e->vx; e->wy += e->vy; clamp_to_screen(&e->wx, &e->wy, e->sprite->width, e->sprite->height); idx = next_idx; continue; }
+        if (e->type == ENT_HULK && e->pushback_timer > 0) { e->pushback_timer--; e->wx += e->vx; e->wy += e->vy; clamp_to_screen(&e->wx, &e->wy, e->sprite_fallback_w, e->sprite_fallback_h); idx = next_idx; continue; }
         bool tick_ready = ((g_frame_count - e->tick_phase) % e->tick_period) == 0;
         if (tick_ready) {
             switch (e->type) {
@@ -1244,16 +1401,26 @@ static void update_entities(void) {
         }
         if (e->type == ENT_LASER || e->type == ENT_TERROR) {
             e->age++;
-            if (e->wx < -SCREEN_TO_FIXED(e->sprite->width) || e->wx > SCREEN_TO_FIXED(SCREEN_WIDTH) || e->wy < -SCREEN_TO_FIXED(e->sprite->height) || e->wy > SCREEN_TO_FIXED(SCREEN_HEIGHT)) {
+            if (e->wx < -ENTITY_W(e) || e->wx > SCREEN_TO_FIXED(SCREEN_WIDTH) || e->wy < -ENTITY_H(e) || e->wy > SCREEN_TO_FIXED(SCREEN_HEIGHT)) {
                 if (e->type == ENT_LASER) g_laser_count--;
                 remove_entity(idx); idx = next_idx; continue;
             }
         } else {
-            clamp_to_screen(&e->wx, &e->wy, e->sprite->width, e->sprite->height);
+            clamp_to_screen(&e->wx, &e->wy, e->sprite_fallback_w, e->sprite_fallback_h);
             int new_dir = get_dir_from_vel(e->vx, e->vy);
             if (new_dir != DIR_NONE) { e->move_dir = new_dir; e->facing_dir = new_dir; }
         }
-        e->anim_frame = (e->anim_frame + 1) % 2; idx = next_idx;
+        // Animation advance
+        if (e->anim) {
+            const FacingInfo* fi = &e->anim->facing[e->facing_dir];
+            if (++e->anim_counter >= fi->step_period) {
+                e->anim_counter = 0;
+                e->anim_frame = (e->anim_frame + 1) % fi->count;
+            }
+        } else {
+            e->anim_frame = (e->anim_frame + 1) % 2;
+        }
+        idx = next_idx;
     }
 }
 
@@ -1274,11 +1441,12 @@ static void process_player_vs_entities(void) {
                     switch (e->type) {
                         
 case ENT_HUMAN: {
+    g_rescue_count++;  // Increment FIRST
     int points = (g_rescue_count <= 5) ? (g_rescue_count * 1000) : 5000;
     spawn_decal(DECAL_SCORE_BONUS, e->wx, e->wy, 60, points, DECAL_LAYER_OVERLAY);
     g_remove_enemy[g_grid_nodes[nidx].entity_idx] = true; 
-    g_rescue_count++; 
-    g_score += points; 
+    g_score += points;
+    if (points > 1000) scorebump = 100;  // Trigger brightness bump for big scores
 } break;
                         case ENT_TERROR: case ENT_CRUISE: case ENT_GRUNT: case ENT_HULK: case ENT_SPHEROID: case ENT_ENFORCER: case ENT_BRAIN: case ENT_QUARK: case ENT_ELECTRODE:
                             g_remove_enemy[g_grid_nodes[nidx].entity_idx] = true; pl->lives--; pl->ghost_x = pl->wx; pl->ghost_y = pl->wy; pl->active = false; pl->death_timer = 30;
@@ -1316,7 +1484,7 @@ static void process_entity_vs_entity(void) {
                         int16_t dist = SCREEN_TO_FIXED(HULK_PUSHBACK);
                         if (a->vx > 0) b->wx += dist; else if (a->vx < 0) b->wx -= dist;
                         if (a->vy > 0) b->wy += dist; else if (a->vy < 0) b->wy -= dist;
-                        clamp_to_screen(&b->wx, &b->wy, b->sprite->width, b->sprite->height);
+                        clamp_to_screen(&b->wx, &b->wy, b->sprite_fallback_w, b->sprite_fallback_h);
                         g_remove_laser[idx] = true; continue;
                     }
                     if (check_swept_collision(a, b)) {
@@ -1438,9 +1606,9 @@ static void draw_player_text(Player* p) {
     float raw_ty = ((float)p->wy / COORD_SCALE) * g_term_rows / SCREEN_HEIGHT;
     float tx = roundf(raw_tx * 2.0f) / 2.0f;
     float ty = roundf(raw_ty * 2.0f) / 2.0f;
-    float tw = (float)p->sprite->width * g_term_cols / SCREEN_WIDTH;
-    float th = (float)p->sprite->height * g_term_rows / SCREEN_HEIGHT;
-    uint8_t cr = p->sprite->r, cg = p->sprite->g, cb = p->sprite->b;
+    float tw = (float)p->sprite_fallback_w * g_term_cols / SCREEN_WIDTH;
+    float th = (float)p->sprite_fallback_h * g_term_rows / SCREEN_HEIGHT;
+    uint8_t cr = 255, cg = 255, cb = 255;
     if (p->invulnerable_timer > 0 && (g_frame_count/6)%2==0) { cr=0; cg=255; cb=255; }
     if (p->death_timer > 0) { cr = 255; cg = 0; cb = 0; }
     draw_text_rect(tx, ty, tw, th, cr, cg, cb);
@@ -1451,9 +1619,9 @@ static void draw_entity_text(Entity* e) {
     float raw_ty = ((float)e->wy / COORD_SCALE) * g_term_rows / SCREEN_HEIGHT;
     float tx = roundf(raw_tx * 2.0f) / 2.0f;
     float ty = roundf(raw_ty * 2.0f) / 2.0f;
-    float tw = (float)e->sprite->width * g_term_cols / SCREEN_WIDTH;
-    float th = (float)e->sprite->height * g_term_rows / SCREEN_HEIGHT;
-    uint8_t cr = e->sprite->r, cg = e->sprite->g, cb = e->sprite->b;
+    float tw = (float)e->sprite_fallback_w * g_term_cols / SCREEN_WIDTH;
+    float th = (float)e->sprite_fallback_h * g_term_rows / SCREEN_HEIGHT;
+    uint8_t cr = 0xff, cg = 0xff, cb = 0xff;
     if (e->type == ENT_HUMAN) {
         static const uint8_t hc[3][3] = {{255,100,200},{100,200,255},{255,255,100}};
         int ht = e->human_type; if (ht<0||ht>2) ht=0;
@@ -1469,25 +1637,35 @@ static void draw_entity_text(Entity* e) {
 static void draw_score_text(void) {
     if (!text_buffer) return;
 
+    // Decay the bump (~0.42 seconds at 60fps)
+    if (scorebump > 0) {
+        scorebump -= 4;
+        if (scorebump < 0) scorebump = 0;
+    }
+
+    // Calculate color: green baseline, boosted toward white when bump > 0
+    unsigned char r = (unsigned char)(scorebump * 2);  // 0-200
+    unsigned char g = 255;
+    unsigned char b = (unsigned char)(scorebump * 2);  // 0-200
+    if (r > 255) r = 255;
+    if (b > 255) b = 255;
+
     char score_str[8];
     snprintf(score_str, sizeof(score_str), "%07d", g_score);
 
     for (int i = 0; i < 7; i++) {
         int digit = score_str[i] - '0';
-        int col_offset = i * 3;  // Each digit is 3 cols wide
+        int col_offset = i * 3;
 
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 3; col++) {
                 int buf_idx = row * g_term_cols + (col_offset + col);
                 if (buf_idx >= 0 && buf_idx < g_term_rows * g_term_cols) {
-                    
-                    // Safely copy the single-character string (max 3 bytes + '\0')
                     snprintf(text_buffer[buf_idx].glyph, 4, "%s", 
                              digit_sprites[digit][row * 3 + col]);
-                    
-                    text_buffer[buf_idx].r = 0;    // Green
-                    text_buffer[buf_idx].g = 255;
-                    text_buffer[buf_idx].b = 0;
+                    text_buffer[buf_idx].r = r;
+                    text_buffer[buf_idx].g = g;
+                    text_buffer[buf_idx].b = b;
                 }
             }
         }
@@ -1495,8 +1673,37 @@ static void draw_score_text(void) {
 }
 
 
-
 //
+// Lookup current frame from sprite set for a given facing + anim frame.
+static const SpriteFrame* get_current_frame(const SpriteSet* ss, int facing_dir, int anim_frame) {
+    if (!ss || !ss->frames) return NULL;
+    const FacingInfo* fi = &ss->facing[facing_dir];
+    return &ss->frames[fi->start + anim_frame];
+}
+
+// Render a sprite frame's cell data into the text buffer.
+// sf: the frame to render. screen_x/y: top-left position in text cells.
+static void render_sprite_frame(const SpriteFrame* sf, int screen_x, int screen_y) {
+    if (!sf || !sf->rows) return;
+    for (int row = 0; row < sf->h; row++) {
+        const uint8_t* r = sf->rows[row];
+        if (!r) continue;
+        for (int col = 0; col < sf->w; col++) {
+            int sx = screen_x + col;
+            int sy = screen_y + row;
+            if (sx < 0 || sx >= g_term_cols || sy < 0 || sy >= g_term_rows) continue;
+            TextCell* cell = &text_buffer[sy * g_term_cols + sx];
+            memcpy(cell->glyph, r + col * 10, 4);
+            cell->r  = r[col * 10 + 4];
+            cell->g  = r[col * 10 + 5];
+            cell->b  = r[col * 10 + 6];
+            cell->br = r[col * 10 + 7];
+            cell->bg = r[col * 10 + 8];
+            cell->bb = r[col * 10 + 9];
+        }
+    }
+}
+
 //------------RENDER ALL------------------------------
 //
 // Update render_all() to call draw_score_text()
@@ -1507,45 +1714,87 @@ static void render_all(void) {
     // 2. Draw FLOOR layer decals (under entities, e.g., squished human 'X's)
     draw_floor_decals();
     
-    // 3. Draw Player (with half-step quantization)
+    // 3. Draw Player (sprite or colored-rect fallback)
     if (g_players[0].active || g_players[0].death_timer > 0) {
-        float raw_tx = ((float)g_players[0].wx / COORD_SCALE) * g_term_cols / SCREEN_WIDTH;
-        float raw_ty = ((float)g_players[0].wy / COORD_SCALE) * g_term_rows / SCREEN_HEIGHT;
-        float tx = roundf(raw_tx * 2.0f) / 2.0f;
-        float ty = roundf(raw_ty * 2.0f) / 2.0f;
-        float tw = (float)g_players[0].sprite->width * g_term_cols / SCREEN_WIDTH;
-        float th = (float)g_players[0].sprite->height * g_term_rows / SCREEN_HEIGHT;
-        
-        uint8_t cr = 255, cg = 255, cb = 255;
-        if (g_players[0].invulnerable_timer > 0 && (g_frame_count/6)%2==0) { 
-            cr=0; cg=255; cb=255; 
+        Player* p = &g_players[0];
+        /* Invulnerability flash: skip rendering on "off" frames */
+        if (p->invulnerable_timer > 0 && (g_frame_count/6)%2==0) {
+            /* off frame — leave blank for flash */
+        } else if (p->death_timer > 0) {
+            /* death — red rect fallback */
+            float raw_tx = ((float)p->wx / COORD_SCALE) * g_term_cols / SCREEN_WIDTH;
+            float raw_ty = ((float)p->wy / COORD_SCALE) * g_term_rows / SCREEN_HEIGHT;
+            float tx = roundf(raw_tx * 2.0f) / 2.0f;
+            float ty = roundf(raw_ty * 2.0f) / 2.0f;
+            float tw = (float)p->sprite_fallback_w * g_term_cols / SCREEN_WIDTH;
+            float th = (float)p->sprite_fallback_h * g_term_rows / SCREEN_HEIGHT;
+            draw_text_rect(tx, ty, tw, th, 255, 0, 0);
+        } else if (p->anim && p->anim->frames[0].w > 1) {
+            /* Real sprite data loaded — render per-cell art */
+            int tx = (int)((float)p->wx / COORD_SCALE * g_term_cols / SCREEN_WIDTH);
+            int ty = (int)((float)p->wy / COORD_SCALE * g_term_rows / SCREEN_HEIGHT);
+            const SpriteFrame* sf = get_current_frame(p->anim, p->facing_dir, p->anim_frame);
+            render_sprite_frame(sf, tx, ty);
+        } else {
+            /* Stub sprites — colored rect fallback */
+            float raw_tx = ((float)p->wx / COORD_SCALE) * g_term_cols / SCREEN_WIDTH;
+            float raw_ty = ((float)p->wy / COORD_SCALE) * g_term_rows / SCREEN_HEIGHT;
+            float tx = roundf(raw_tx * 2.0f) / 2.0f;
+            float ty = roundf(raw_ty * 2.0f) / 2.0f;
+            float tw = (float)p->sprite_fallback_w * g_term_cols / SCREEN_WIDTH;
+            float th = (float)p->sprite_fallback_h * g_term_rows / SCREEN_HEIGHT;
+            draw_text_rect(tx, ty, tw, th, 255, 255, 255);
         }
-        if (g_players[0].death_timer > 0) { 
-            cr = 255; cg = 0; cb = 0; 
-        }
-        draw_text_rect(tx, ty, tw, th, cr, cg, cb);
     }
     
-    // 4. Draw Entities (with half-step quantization)
+    // 4. Draw Entities (sprite or colored-rect fallback)
     for (int16_t idx = g_list_head; idx != -1; idx = g_next[idx]) {
         Entity* e = &g_entities[idx];
         if (!e->active) continue;
         
-        float raw_tx = ((float)e->wx / COORD_SCALE) * g_term_cols / SCREEN_WIDTH;
-        float raw_ty = ((float)e->wy / COORD_SCALE) * g_term_rows / SCREEN_HEIGHT;
-        float tx = roundf(raw_tx * 2.0f) / 2.0f;
-        float ty = roundf(raw_ty * 2.0f) / 2.0f;
-        float tw = (float)e->sprite->width * g_term_cols / SCREEN_WIDTH;
-        float th = (float)e->sprite->height * g_term_rows / SCREEN_HEIGHT;
-        
-        uint8_t cr = e->sprite->r, cg = e->sprite->g, cb = e->sprite->b;
-        if (e->type == ENT_HUMAN) {
-            static const uint8_t hc[3][3] = {{255,100,200},{100,200,255},{255,255,100}};
-            int ht = e->human_type; 
-            if (ht<0||ht>2) ht=0;
-            cr=hc[ht][0]; cg=hc[ht][1]; cb=hc[ht][2];
+        if (e->anim && e->anim->frames[0].w > 1) {
+            /* Real sprite data loaded — render per-cell art */
+            int tx = (int)((float)e->wx / COORD_SCALE * g_term_cols / SCREEN_WIDTH);
+            int ty = (int)((float)e->wy / COORD_SCALE * g_term_rows / SCREEN_HEIGHT);
+            const SpriteFrame* sf = get_current_frame(e->anim, e->facing_dir, e->anim_frame);
+            render_sprite_frame(sf, tx, ty);
+        } else {
+            /* Stub sprites — colored rect fallback */
+            float raw_tx = ((float)e->wx / COORD_SCALE) * g_term_cols / SCREEN_WIDTH;
+            float raw_ty = ((float)e->wy / COORD_SCALE) * g_term_rows / SCREEN_HEIGHT;
+            float tx = roundf(raw_tx * 2.0f) / 2.0f;
+            float ty = roundf(raw_ty * 2.0f) / 2.0f;
+            float tw = (float)e->sprite_fallback_w * g_term_cols / SCREEN_WIDTH;
+            float th = (float)e->sprite_fallback_h * g_term_rows / SCREEN_HEIGHT;
+
+            /* Per-entity-type color table */
+            uint8_t cr = 255, cg = 255, cb = 255;
+            switch (e->type) {
+                case ENT_GRUNT:     cr=178; cg= 34; cb= 34; break; /* brick-red */
+                case ENT_HULK:      cr=  0; cg=200; cb=  0; break; /* green */
+                case ENT_SPHEROID:  cr=255; cg=165; cb=  0; break; /* orange */
+                case ENT_ENFORCER:  cr=200; cg= 50; cb=150; break; /* reddish purple */
+                case ENT_LASER:     cr=255; cg=255; cb=  0; break; /* yellow */
+                case ENT_TERROR:    cr=180; cg=  0; cb=255; break; /* violet/purple */
+                case ENT_QUARK:     cr=255; cg= 60; cb= 60; break; /* red */
+                case ENT_BRAIN:     cr=180; cg=  0; cb=180; break; /* magenta */
+                case ENT_ELECTRODE: cr=120; cg=120; cb=255; break; /* blue */
+                case ENT_CRUISE:    cr=  0; cg=200; cb=200; break; /* cyan */
+                case ENT_HUMAN: {
+                    static const uint8_t hc[3][3] = {
+                        {255,182,193}, /* mommy: pink */
+                        {173,216,230}, /* daddy: light blue */
+                        {255,218,185}  /* mikey: peach */
+                    };
+                    int ht = e->human_type;
+                    if (ht<0||ht>2) ht=0;
+                    cr=hc[ht][0]; cg=hc[ht][1]; cb=hc[ht][2];
+                    break;
+                }
+                default: break;
+            }
+            draw_text_rect(tx, ty, tw, th, cr, cg, cb);
         }
-        draw_text_rect(tx, ty, tw, th, cr, cg, cb);
     }
     
     // 5. Draw OVERLAY layer decals (above entities, e.g., rainbow score bonuses)
@@ -1631,6 +1880,541 @@ static void play_level_intro_text(void) {
     fflush(stdout);
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ============================================================
+//  INTRO SCREEN - VT100 Double-Size Wargames Style
+// ============================================================
+
+      
+static void load_and_draw_ansi_logo(const char* filename) {
+    const int logo_width = 86;  // Fixed width of the logo
+    
+    // Calculate centered starting column
+    int start_col = (g_term_cols - logo_width) / 2 + 2;
+    if (start_col < 1) start_col = 1;
+
+    FILE* f = fopen(filename, "r");
+    if (!f) {
+        // Fallback: draw text logo if file not found
+        const char* fallback_logo[] = {
+            "d8888b. db      .d88b.  d8888b.  .d88b.  d888888b d8888b.  .d88b.  d8b   db ",
+            "88  `8D 88     .8P  Y8. 88  `8D .8P  Y8. `~~88~~' 88  `8D .8P  Y8. 888o  88 ",
+            "88oooY' 88     88    88 88oodD' 88    88    88    88oobY' 88    88 88V8o 88 ",
+            "88~~~b. 88     88    88 88~~~   88    88    88    88`8b   88    88 88 V8o88 ",
+            "88   8D 88booo.`8b  d8' 88      `8b  d8'    88    88 `88. `8b  d8' 88  V888 ",
+            "Y8888P' Y88888P `Y88P'  88       `Y88P'     YP    88   YD  `Y88P'  VP   V8P "
+        };
+        int num_lines = sizeof(fallback_logo) / sizeof(fallback_logo[0]);
+        
+        printf("\x1b[38;2;255;100;0m"); // Orange color
+        for (int i = 0; i < num_lines; i++) {
+            printf("\x1b[%d;%dH%s", i + 3, start_col, fallback_logo[i]);
+        }
+        printf("\x1b[0m");
+        return;
+    }
+
+    // File exists: draw from file
+    char line[256];
+    int row = 1;
+
+    while (fgets(line, sizeof(line), f)) {
+        int len = strlen(line);
+        
+        // Strip newline and carriage return
+        if (len > 0 && line[len-1] == '\n') { line[--len] = '\0'; }
+        if (len > 0 && line[len-1] == '\r') { line[--len] = '\0'; }
+        
+        // Crop if too wide
+        if (len > logo_width) {
+            line[logo_width] = '\0';
+        }
+
+        printf("\x1b[%d;%dH%s", row, start_col, line);
+        row++;
+    }
+    
+    fclose(f);
+    printf("\x1b[0m");
+}
+
+
+static void draw_double_size_text(int start_row, int start_col, const char* text, 
+                                   unsigned char r, unsigned char g, unsigned char b) {
+    if (!text || start_row < 1 || start_row + 1 > g_term_rows) return;
+    if (start_col < 1) start_col = 1;
+    
+    // Set the color
+    printf("\x1b[38;2;%d;%d;%dm", r, g, b);
+    
+    // Top half: cursor to column 1, emit \e#3, pad to start_col, print text
+    printf("\x1b[%d;1H\x1b#3", start_row);
+    for (int i = 1; i < start_col; i++) {
+        putchar(' ');
+    }
+    printf("%s", text);
+    
+    // Bottom half: cursor to column 1 of next row, emit \e#4, pad, print text
+    printf("\x1b[%d;1H\x1b#4", start_row + 1);
+    for (int i = 1; i < start_col; i++) {
+        putchar(' ');
+    }
+    printf("%s", text);
+    
+    // Reset attributes
+    printf("\x1b[0m");
+    fflush(stdout);
+}
+
+static void draw_marquee_text(void) {
+    const char* marquee_lines[] = {
+        "      IT IS THE YEAR 2024       ",
+        "     THE BLOPS HAVE INVADED     ",
+        "THEY HUNT THE LAST HUMAN FAMILES",
+        " SAVE THEM FROM THE BLOP HORDE  ",
+        "    YOU ARE THEIR ONLY HOPE     "
+    };
+
+    int num_lines = sizeof(marquee_lines) / sizeof(marquee_lines[0]);
+    int start_row = 12;
+    int textwidth = 33;
+    
+    int start_col = (g_term_cols / 4) - (textwidth / 2) + 0;
+    if (start_col < 1) start_col = 1;
+
+    unsigned char r = 255, g = 175, b = 0;
+    const char* cursor = "\xe2\x96\x92";
+
+    bool skip = false;
+    
+    for (int i = 0; i < num_lines; i++) {
+        const char* line = marquee_lines[i];
+        int len = strlen(line);
+        char current_text[256];
+        int j;
+        
+        for (j = 0; j < len; j++) {
+            // Non-blocking keyboard check
+            fd_set set;
+            struct timeval timeout = {0, 0};
+            FD_ZERO(&set);
+            FD_SET(STDIN_FILENO, &set);
+            
+            if (select(STDIN_FILENO + 1, &set, NULL, NULL, &timeout) > 0) {
+                char ch;
+                fd_set drain_set;
+                struct timeval drain_timeout = {0, 0};
+                
+                // SAFE DRAIN: Use select before every read to prevent blocking
+                for (;;) {
+                    FD_ZERO(&drain_set);
+                    FD_SET(STDIN_FILENO, &drain_set);
+                    if (select(STDIN_FILENO + 1, &drain_set, NULL, NULL, &drain_timeout) <= 0)
+                        break;
+                    if (read(STDIN_FILENO, &ch, 1) <= 0)
+                        break;
+                }
+                skip = true;
+                break;
+            }
+            
+            current_text[j] = line[j];
+            current_text[j + 1] = '\0';
+
+            if (j < len - 1) {
+                char draw_text[256];
+                snprintf(draw_text, sizeof(draw_text), "%s%s", current_text, cursor);
+                draw_double_size_text(start_row + (i * 2), start_col, draw_text, r, g, b);
+            } else {
+                draw_double_size_text(start_row + (i * 2), start_col, current_text, r, g, b);
+            }
+
+            usleep(90000);
+        }
+
+        if (skip) {
+            for (int k = i; k < num_lines; k++) {
+                draw_double_size_text(start_row + (k * 2), start_col, marquee_lines[k], r, g, b);
+            }
+            break;
+        }
+
+        draw_double_size_text(start_row + (i * 2), start_col, current_text, r, g, b);
+        
+        int cursor_col = start_col + len;
+        printf("\x1b[%d;%dH \x1b[%d;%dH ", 
+               start_row + (i * 2), cursor_col,
+               start_row + (i * 2) + 1, cursor_col);
+        fflush(stdout);
+
+        usleep(150000);
+    }
+}
+
+
+static void draw_keyboard_schematic(void) {
+    int start_row = g_term_rows - 22;  
+    int schematic_width = 46;          // Width of the longest line in the schematic
+    
+    // YOUR EXACT LOGIC:
+    int start_col = (g_term_cols / 4) - (schematic_width / 2) + 1;
+    if (start_col < 1) start_col = 1;
+
+    draw_double_size_text(start_row +  0, start_col, "............................................", 210, 100, 0);
+    draw_double_size_text(start_row +  2, start_col, ".... W.A.L.K ................. F.I.R.E .....", 219, 100, 0);
+    draw_double_size_text(start_row +  4, start_col, "..┌───┬───┬───┐ ........... ┌───┬───┬───┐...", 240, 110, 10);
+    draw_double_size_text(start_row +  6, start_col, "..│ Q │ W │ E │ ........... │ 7 │ 8 │ 9 │...", 250, 115, 10);
+    draw_double_size_text(start_row +  8, start_col, "..├───┼───┼───┤ ........... ├───┼───┼───┤...", 250, 115, 10);
+    draw_double_size_text(start_row + 10, start_col, "..│ A │ S │ D │ .S to Stop. │ 4 │ 5 │ 6 │...", 240, 105, 5);
+    draw_double_size_text(start_row + 12, start_col, "..├───┼───┼───┤ ..walking.. ├───┼───┼───┤...", 230, 105, 5);
+    draw_double_size_text(start_row + 14, start_col, "..│ Z │ X │ C │ ........... │ 1 │ 2 │ 3 │...", 220, 100, 0);
+    draw_double_size_text(start_row + 16, start_col, "..└───┴───┴───┘ ........... └───┴───┴───┘...", 210, 100, 0);
+    draw_double_size_text(start_row + 18, start_col, "......................... 5 to stop firing..", 200, 100, 0);
+    
+    printf("\x1b[0m");
+}
+
+static void play_demo_animation(void) {
+    // Clear middle section for animation
+    for (int row = 12; row < g_term_rows - 14; row++) {
+        printf("\x1b[%d;1H\x1b[K", row);
+    }
+    
+    int anim_row = 20;
+    int frame = 0;
+    int max_frames = 300;  // 5 seconds at 60fps
+    
+    // Entity positions (in terminal columns)
+    float mommy_x = -5;
+    float hulk_x = -10;
+    float grunt1_x = -15;
+    float grunt2_x = -20;
+    float player_x = -5;
+    
+    // Speeds (columns per frame)
+    float mommy_speed = 0.05;
+    float hulk_speed = mommy_speed * 1.1;
+    float grunt_speed = hulk_speed * 0.9;
+    float player_speed = 0.08;
+    
+    int mommy_pause_start = -1;
+    bool grunt1_dead = false;
+    bool grunt2_dead = false;
+    int player_shoot_timer = 0;
+    float laser_x = -100;
+    bool laser_active = false;
+    
+    while (frame < max_frames) {
+        // Clear previous frame
+        for (int row = anim_row - 1; row <= anim_row + 1; row++) {
+            printf("\x1b[%d;1H\x1b[K", row);
+        }
+        
+        // Update positions
+        mommy_x += mommy_speed;
+        
+        // Mommy pauses after reaching center
+        if (mommy_x > g_term_cols / 3 && mommy_pause_start == -1) {
+            mommy_pause_start = frame;
+        }
+        if (mommy_pause_start != -1 && frame - mommy_pause_start < 180) {
+            // Paused
+        } else {
+            mommy_x += mommy_speed;
+        }
+        
+        hulk_x += hulk_speed;
+        
+        // Grunts move jerkily
+        if (frame % 3 == 0) {
+            grunt1_x += grunt_speed;
+            grunt2_x += grunt_speed;
+        }
+        
+        // Player appears later and moves faster
+        if (frame > 60) {
+            player_x += player_speed;
+        }
+        
+        // Player shooting logic
+        if (frame > 90 && !laser_active && player_shoot_timer == 0) {
+            // Shoot at grunt1
+            if (!grunt1_dead && player_x > grunt1_x - 10) {
+                laser_active = true;
+                laser_x = player_x;
+                player_shoot_timer = 30;
+            }
+        }
+        
+        if (frame > 120 && !laser_active && player_shoot_timer == 0) {
+            // Shoot at grunt2
+            if (!grunt2_dead && player_x > grunt2_x - 10) {
+                laser_active = true;
+                laser_x = player_x;
+                player_shoot_timer = 30;
+            }
+        }
+        
+        if (frame > 150 && !laser_active && player_shoot_timer == 0) {
+            // Shoot at hulk
+            if (player_x > hulk_x - 10) {
+                laser_active = true;
+                laser_x = player_x;
+                player_shoot_timer = 30;
+            }
+        }
+        
+        // Update laser
+        if (laser_active) {
+            laser_x += 0.3;
+            
+            // Check hits
+            if (!grunt1_dead && abs(laser_x - grunt1_x) < 1) {
+                grunt1_dead = true;
+                laser_active = false;
+            }
+            if (!grunt2_dead && abs(laser_x - grunt2_x) < 1) {
+                grunt2_dead = true;
+                laser_active = false;
+            }
+            // Hulk gets pushed
+            if (abs(laser_x - hulk_x) < 1) {
+                hulk_x += 2;  // Push hulk forward
+                laser_active = false;
+            }
+            
+            if (laser_x > g_term_cols) {
+                laser_active = false;
+            }
+        }
+        
+        if (player_shoot_timer > 0) player_shoot_timer--;
+        
+        // Draw entities
+        // Mommy (pink)
+        if (mommy_x > 0 && mommy_x < g_term_cols) {
+            printf("\x1b[%d;%dH\x1b[38;2;255;100;200m██\x1b[0m", anim_row, (int)mommy_x);
+        }
+        
+        // Hulk (green)
+        if (hulk_x > 0 && hulk_x < g_term_cols) {
+            printf("\x1b[%d;%dH\x1b[38;2;0;255;0m████\x1b[0m", anim_row, (int)hulk_x);
+        }
+        
+        // Grunts (red)
+        if (!grunt1_dead && grunt1_x > 0 && grunt1_x < g_term_cols) {
+            printf("\x1b[%d;%dH\x1b[38;2;220;55;55m██\x1b[0m", anim_row, (int)grunt1_x);
+        }
+        if (!grunt2_dead && grunt2_x > 0 && grunt2_x < g_term_cols) {
+            printf("\x1b[%d;%dH\x1b[38;2;220;55;55m██\x1b[0m", anim_row, (int)grunt2_x);
+        }
+        
+        // Player (white)
+        if (player_x > 0 && player_x < g_term_cols) {
+            printf("\x1b[%d;%dH\x1b[38;2;255;255;255m██\x1b[0m", anim_row, (int)player_x);
+        }
+        
+        // Laser (yellow)
+        if (laser_active && laser_x > 0 && laser_x < g_term_cols) {
+            printf("\x1b[%d;%dH\x1b[38;2;255;255;0m█\x1b[0m", anim_row, (int)laser_x);
+        }
+        
+        fflush(stdout);
+        frame++;
+        usleep(16000);  // ~60fps
+    }
+}
+
+static void play_intro_screen(void) {
+    printf("\x1b[2J\x1b[H");
+    
+    load_and_draw_ansi_logo("blopotron.ans");
+    fflush(stdout);
+    usleep(800000); // Brief pause before gameplay initialization
+    draw_marquee_text();
+    draw_keyboard_schematic();
+    
+    const char* prompt = "INSERT TOKEN TO CONTINUE";
+    int prompt_len = strlen(prompt);
+    int prompt_col = (g_term_cols - prompt_len) / 2 - 1;
+    if (prompt_col < 1) prompt_col = 1;
+    int prompt_row = g_term_rows - 1;
+    
+    unsigned char r = 255, g = 175, b = 0; // Amber
+    bool visible = true;
+    bool done = false;
+    
+    while (!done) {
+        if (visible) {
+            printf("\x1b[%d;%dH\x1b[38;2;%d;%d;%dm%s\x1b[0m", prompt_row, prompt_col, r, g, b, prompt);
+        } else {
+            printf("\x1b[%d;%dH", prompt_row, prompt_col);
+            for (int i = 0; i < prompt_len; i++) putchar(' ');
+        }
+        fflush(stdout);
+        
+        // Drastically simplified: poll for any key
+        if (check_any_key_pressed()) {
+            done = true;
+        } else {
+            usleep(420000); // 250ms blink interval
+            visible = !visible;
+        }
+    }
+    
+    // Clean up: erase the prompt completely before game starts
+    printf("\x1b[%d;%dH", prompt_row, prompt_col);
+    for (int i = 0; i < prompt_len; i++) putchar(' ');
+    fflush(stdout);
+    
+    usleep(500000); // Brief pause before gameplay initialization
+}
+
+
+// ============================================================
+//  INTRO ANIMATION: Classic 80s ANSI Zooming Boxes
+// ============================================================
+static void play_zooming_boxes_text(void) {
+    const char *CURSOR_HOME = "\x1b[H";
+    const char *CLEAR_SCREEN = "\x1b[2J";
+    const char *RESET_STR = "\x1b[0m";
+    const char *HIDE_CURSOR = "\x1b[?25l";
+    const char *SHOW_CURSOR = "\x1b[?25h";
+    const char *BLACK = "\x1b[30m";
+    
+    static int num_colors = 10;
+    static const char* colors[10] = {
+        "\x1b[95m", "\x1b[91m", "\x1b[38;5;208m", "\x1b[93m", "\x1b[92m",
+        "\x1b[96m", "\x1b[94m", "\x1b[34m", "\x1b[38;5;129m", "\x1b[95m"
+    };
+    
+    int blag = 22; // The "lag" trail length
+    int center_x = g_term_cols / 2;
+    int center_y = g_term_rows / 2;
+    int max_w = g_term_cols;
+    int max_h = g_term_rows;
+    
+    // Calculate frames based on terminal size to ensure it fills the screen
+    int numframes = (g_term_rows / 2) < (g_term_cols / 4) ? (g_term_rows / 2) : (g_term_cols / 4);
+    
+    typedef struct { 
+        int bx1, by1, bx2, by2; 
+        const char* color; 
+    } TBox;
+    
+    TBox myboxes[128];
+    int bwidth = max_w - 2;
+    int bheight = max_h - 2;
+    
+    // Pre-calculate all box dimensions and colors
+    for (int i = numframes - 1; i >= 0; i--) {
+        myboxes[i].bx1 = center_x - (bwidth / 2);
+        myboxes[i].by1 = center_y - (bheight / 2);
+        myboxes[i].bx2 = center_x + (bwidth / 2);
+        myboxes[i].by2 = center_y + (bheight / 2);
+        myboxes[i].color = colors[i % num_colors];
+        bwidth -= 4; 
+        bheight -= 2;
+    }
+    
+    int x, y;
+    printf("%s%s%s", CLEAR_SCREEN, CURSOR_HOME, HIDE_CURSOR);
+    fflush(stdout);
+    
+    // Animation loop
+    for (int frame = 1; frame < (int)(1.89 * numframes); frame++) {
+        int fr = frame; 
+        if (fr > numframes - 1) fr = numframes - 1;
+        
+        int er = (frame - blag); 
+        if (er < 0) er = 0; 
+        if (er > numframes - 1) er = numframes - 1;
+        
+        // 1. Draw the new leading box
+        TBox *box = &myboxes[fr];
+        printf("%s", box->color);
+        
+        // Top and bottom edges
+        printf("\x1b[%d;%dH", box->by1 + 1, box->bx1 + 1);
+        for (x = box->bx1; x <= box->bx2; x++) printf("─");
+        printf("\x1b[%d;%dH", box->by2 + 1, box->bx1 + 1);
+        for (x = box->bx1; x <= box->bx2; x++) printf("─");
+        
+        // Left and right edges + corners
+        y = box->by1; 
+        printf("\x1b[%d;%dH┌", y + 1, box->bx1 + 1);
+        for (y = box->by1 + 1; y <= box->by2 - 1; y++) printf("\x1b[%d;%dH│", y + 1, box->bx1 + 1);
+        printf("\x1b[%d;%dH└", y + 1, box->bx1 + 1);
+        
+        y = box->by1; 
+        printf("\x1b[%d;%dH┐", y + 1, box->bx2 + 1);
+        for (y = box->by1 + 1; y <= box->by2 - 1; y++) printf("\x1b[%d;%dH│", y + 1, box->bx2 + 1);
+        printf("\x1b[%d;%dH┘", y + 1, box->bx2 + 1);
+        
+        // 2. Erase the trailing box with black spaces
+        box = &myboxes[er];
+        printf("%s", BLACK);
+        
+        printf("\x1b[%d;%dH", box->by1 + 1, box->bx1 + 1);
+        for (x = box->bx1; x <= box->bx2; x++) printf(" ");
+        printf("\x1b[%d;%dH", box->by2 + 1, box->bx1 + 1);
+        for (x = box->bx1; x <= box->bx2; x++) printf(" ");
+        
+        y = box->by1; 
+        printf("\x1b[%d;%dH ", y + 1, box->bx1 + 1);
+        for (y = box->by1 + 1; y <= box->by2 - 1; y++) printf("\x1b[%d;%dH ", y + 1, box->bx1 + 1);
+        printf("\x1b[%d;%dH ", y + 1, box->bx1 + 1);
+        
+        y = box->by1; 
+        printf("\x1b[%d;%dH ", y + 1, box->bx2 + 1);
+        for (y = box->by1 + 1; y <= box->by2 - 1; y++) printf("\x1b[%d;%dH ", y + 1, box->bx2 + 1);
+        printf("\x1b[%d;%dH ", y + 1, box->bx2 + 1);
+        
+        printf("%s", RESET_STR);
+        fflush(stdout);
+        usleep(33333); // ~30fps
+    }
+    
+    // Cleanup: show cursor and reset attributes
+    printf("%s%s", SHOW_CURSOR, RESET_STR);
+    fflush(stdout);
+}
+
+
+
+
+
+
+
+
+
+
 // ============================================================
 //  MAIN
 // ============================================================
@@ -1642,34 +2426,11 @@ int main(void) {
     init_text_buffer();
     init_text_mode();
     
-    printf("\x1b[2J\x1b[H");
-    printf("\x1b[38;2;255;255;0m");
-    printf("  BLOPOTRON 2024\n\n");
-    printf("\x1b[38;2;255;255;255m");
-    printf("  MOVE: w/a/d/x  DIAGONALS: q/e/z/c  STOP: s\n");
-    printf("  FIRE: numpad 7-9/4/6/1-3 (autofire)  5=stop fire\n");
-    printf("  INSERT COIN (Press '1' or ENTER)\n");
-    printf("  Press ESC to quit\n");
-    fflush(stdout);
+    play_intro_screen();
 
-    int waiting = 1;
-    while (waiting) {
-        fd_set set;
-        struct timeval timeout = {0, 50000};
-        FD_ZERO(&set);
-        FD_SET(STDIN_FILENO, &set);
-        if (select(STDIN_FILENO + 1, &set, NULL, NULL, &timeout) > 0) {
-            char ch;
-            if (read(STDIN_FILENO, &ch, 1) == 1) {
-                if (ch == '1' || ch == '\n' || ch == '\r') waiting = 0;
-                else if (ch == 27) goto cleanup;
-            }
-        }
-    }
-
-
-    play_level_intro_text();
     restart_game(1);
+
+    play_zooming_boxes_text();
 
     // 3. Gameplay Loop
     printf("\x1b[2J\x1b[H");
@@ -1680,25 +2441,30 @@ int main(void) {
         
         update_all(); // <-- No arguments
         render_all(); // <-- No arguments
-        
+        if (g_show_game_over) { usleep(500000); break; }
         usleep(16000); 
     }
 
 
 
 cleanup:
-    // 1. Restore terminal to normal canonical mode first
+    // Restore terminal
     fini_text_mode();
+    // Reset colors and show cursor (but DO NOT clear the screen)
+    printf("\x1b[0m\x1b[?25h");  // Reset colors, show cursor
     
-    // 2. Reset colors and show cursor (but DO NOT clear the screen)
-    printf("\x1b[0m\x1b[?25h");
+    // Print final score persistently
+    printf("\n\n");
+    printf("  \x1b[38;2;255;255;0mGAME OVER\x1b[0m\n\n");
+    printf("  \x1b[38;2;0;255;0mYOUR SCORE: %07d\x1b[0m\n\n", g_score);
+    printf("  Wave reached: %d\n", g_level);
+    printf("  Humans rescued: %d\n\n", g_rescue_count);
     
-    // 3. Print the final score persistently to stdout
+    // Print the final score persistently to stdout
     printf("\n\n  YOUR SCORE: %07d\n\n", g_score);
     
-    // 4. Clean up the text buffer
+    // Clean up the text buffer
     fini_text_buffer();
     
     return 0;
-}
 }
