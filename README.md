@@ -1,7 +1,7 @@
 # Blopotron: Terminal Arcade Game
 ![blopotron](blopotron2026b.gif)
 
-A pure terminal, single-file C Robotron-style shooter. [WIP]
+A pure terminal, single-file C Robotron-style shooter.  Human-designed in 2015, boosted to playable with help from Qwen and GLM. [WIP]
 
 Survive waves of enemies in your terminal. No tutorials, no cutscenes, no inventory, and no external graphics libraries. Just you, the dual-joystick scheme, and an ever-growing swarm trying to kill you.
 
