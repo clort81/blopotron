@@ -52,11 +52,11 @@ gcc blopogfon.c -o blopotron
 ## TODO: 
 
 There's a lot of work sunk into sprites that are 4-5 rows high and it's just too big for the whole-view game.  These could be used for a 'slidig widow' where the terminal view shows just a small portion of the larger arena. 
+![blopotron spritesheet](blopotron_spritesheet.png)
 
 A new small 2-3 row spriteset is underway, which by ratios of original game means a 2-row, 4-5 column wide sprite needs an overall terminal resolution of about 38 rows height and 120 rows width.  By extrapolation the 4-5 row sprites would need about a 80 row tall terminal, about 240 columns wide -- a bit much.
 
 Brains and their cruise missiles.  Tanks, Quarks, Progs.   This game will not attempt to duplicate robotron2084 gameplay but offer something similar.
-![blopotron spritesheet](blopotron_spritesheet.png)
 
 ## Why Who What?
 
