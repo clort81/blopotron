@@ -3,15 +3,12 @@
 
 A pure terminal, single-file C Robotron-style shooter.  Human-designed in 2015, boosted to playable with help from Qwen and GLM. [WIP]
 
-Survive waves of enemies in your terminal. No tutorials, no cutscenes, no inventory, and no external graphics libraries. Just you, the dual-joystick scheme, and an ever-growing swarm trying to kill you.
+Survive waves of enemies in your terminal. No tutorials, no cutscenes, no inventory, no gpu needed. Just you in terminal-land, the dual-joystick scheme excitingly mapped to keyboard, and an ever-growing swarm trying to kill.
 
-## What This Is
-A single-file C game that runs entirely in the ANSI terminal. It features a custom, high-performance offscreen text buffer engine that renders smooth, half-step sub-character motion using UTF-8 box-drawing characters. 
+![curatespritesheet](spritesheet-edit.png)
 
-## The Idea
-Modern games ship with gigabytes of assets, engines, and build pipelines. This is the opposite: one C file, zero external dependencies, and a custom rendering pipeline. 
-
-The goal is didactic — to show that a complete, playable, smooth-framerate game can fit in a single source file without external tools. The kind of thing you could compile and run on any POSIX system in 1984, if they'd had UTF-8.
+## Why JABACFT? (just another bad arcade clone for terminal)?
+*Blopotron introduces something NEW*: clever character design enables sub-character-cell animation for smooth(ish) motion in a standard ANSI terminal.  It does not need sixel, kitty protocol or anything else fancy.  Just a terminal emulator (xterm) with utf-8, VT100 DECCTL and truecolor ECMA-48 ANSI Color support!
 
 ## Features
 - **Pure Terminal Rendering**: Direct ANSI escape code and UTF-8 output.
