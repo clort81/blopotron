@@ -1,5 +1,5 @@
 # Blopotron: Terminal Arcade Game
-![blopotron](blopotron2026b.gif)
+![blopotron](blopotron_demo.gif)
 
 A pure terminal, single-file C Robotron-style shooter.  Human-designed in 2015, boosted to playable with help from Qwen and GLM. [WIP]
 
@@ -16,6 +16,7 @@ The goal is didactic — to show that a complete, playable, smooth-framerate gam
 ## Features
 - **Pure Terminal Rendering**: Direct ANSI escape code and UTF-8 output.
 - **Half-Step Quantization**: Smooth sub-pixel entity movement rendered using 1/2-step UTF-8 block characters (`█`, `▌`, `▐`, `▄`, `▀`, `▗`, `▖`, `▝`, `▘`).
+![halfstep-trick](enforcer-halfstep.png).
 - **Decal System**: 
   - *Floor Decals*: Grey/white pulsing `╳` marks left behind when a Hulk crushes a human.
   - *Overlay Decals*: Rainbow color-cycling score popups (e.g., "1000", "5000") that appear when humans are rescued.
@@ -45,11 +46,11 @@ Requires a standard C compiler (GCC or Clang) and the math library.
 
 ```bash
 # Compile with optimizations and warnings
-gcc -O2 -Wall bta.c -o bta -lm
+gcc blopogfon.c -o blopotron
 
 # Run the game
 
-./bta
+./blopotron
 ```
 ## TODO: 
 
