@@ -5,7 +5,7 @@ A pure terminal, single-file C Robotron-style shooter.  Human-designed in 2015, 
 
 Survive waves of enemies in your terminal. No tutorials, no cutscenes, no inventory, no gpu needed. Just you in terminal-land, the dual-joystick scheme excitingly mapped to keyboard, and an ever-growing swarm trying to kill.
 
-![curatespritesheet](spritesheet-edit.png)
+![curatespritesheet](spritesheetedit.gif)
 
 ## Why JABACFT? (just another bad arcade clone for terminal)?
 *Blopotron introduces something NEW*: clever character design enables sub-character-cell animation for smooth(ish) motion in a standard ANSI terminal.  It does not need sixel, kitty protocol or anything else fancy.  Just a terminal emulator (xterm) with utf-8, VT100 DECCTL and truecolor ECMA-48 ANSI Color support!
