@@ -528,11 +528,11 @@ static const int player_walk_e[] = {
 
 static const SpriteSet sprite_player_set = {
     "Player", 31, player_frames,
-    { /* N, S, W, E -- {indices, count, step, ox, oy} */
-        { player_walk_n, 7, 6, 0, 0 }, /* N */
-        { player_walk_s, 31, 6, 0, 0 }, /* S */
-        { player_walk_w, 12, 6, 0, 0 }, /* W */
-        { player_walk_e, 31, 6, 0, 0 } /* E */
+    { /* N, S, W, E -- {indices, count, step, ox, oy, scale_x, scale_y} */
+        { player_walk_n, 7, 6, 0, 0, 4, 4 }, /* N */
+        { player_walk_s, 31, 6, 0, 0, 4, 4 }, /* S */
+        { player_walk_w, 12, 6, 0, 0, 4, 4 }, /* W */
+        { player_walk_e, 31, 6, 0, 0, 4, 4 } /* E */
     }
 };
 
@@ -623,11 +623,11 @@ static const int grunt_walk_e[] = {
 
 static const SpriteSet sprite_grunt_set = {
     "Grunt", 4, grunt_frames,
-    { /* N, S, W, E -- {indices, count, step, ox, oy} */
-        { grunt_walk_n, 2, 8, 0, 0 }, /* N */
-        { grunt_walk_s, 2, 8, 0, 0 }, /* S */
-        { grunt_walk_w, 4, 8, 0, 0 }, /* W */
-        { grunt_walk_e, 4, 8, 0, 0 } /* E */
+    { /* N, S, W, E -- {indices, count, step, ox, oy, scale_x, scale_y} */
+        { grunt_walk_n, 2, 8, 0, 0, 4, 4 }, /* N */
+        { grunt_walk_s, 2, 8, 0, 0, 4, 4 }, /* S */
+        { grunt_walk_w, 4, 8, 0, 0, 4, 4 }, /* W */
+        { grunt_walk_e, 4, 8, 0, 0, 4, 4 } /* E */
     }
 };
 
@@ -792,7 +792,7 @@ static const uint8_t hulk_f7_r2[30] = {
 static const uint8_t* const hulk_f7_rows[] = {
     hulk_f7_r0,hulk_f7_r1,hulk_f7_r2
 };
-static const SpriteFrame hulk_f7 = { hulk_f7_rows, 3, 3, 1, 1 };
+static const SpriteFrame hulk_f7 = { hulk_f7_rows, 3, 3, 0, 1 };
 static const uint8_t hulk_f8_r0[30] = {
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0x00,0xff,0x00,
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -808,7 +808,7 @@ static const uint8_t hulk_f8_r2[30] = {
 static const uint8_t* const hulk_f8_rows[] = {
     hulk_f8_r0,hulk_f8_r1,hulk_f8_r2
 };
-static const SpriteFrame hulk_f8 = { hulk_f8_rows, 3, 3, 1, 1 };
+static const SpriteFrame hulk_f8 = { hulk_f8_rows, 3, 3, 0, 1 };
 static const uint8_t hulk_f9_r0[40] = {
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x97,0x00, 0x00,0xff,0x00, 0x00,0x00,0x00,
     0xe2,0x96,0x96,0x00, 0x00,0xff,0x00, 0x00,0x00,0x00,0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -920,7 +920,7 @@ static const uint8_t hulk_f15_r2[30] = {
 static const uint8_t* const hulk_f15_rows[] = {
     hulk_f15_r0,hulk_f15_r1,hulk_f15_r2
 };
-static const SpriteFrame hulk_f15 = { hulk_f15_rows, 3, 3, 1, 1 };
+static const SpriteFrame hulk_f15 = { hulk_f15_rows, 3, 3, 0, 1 };
 static const uint8_t hulk_f16_r0[30] = {
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0x00,0xff,0x00,
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -936,7 +936,7 @@ static const uint8_t hulk_f16_r2[30] = {
 static const uint8_t* const hulk_f16_rows[] = {
     hulk_f16_r0,hulk_f16_r1,hulk_f16_r2
 };
-static const SpriteFrame hulk_f16 = { hulk_f16_rows, 3, 3, 1, 1 };
+static const SpriteFrame hulk_f16 = { hulk_f16_rows, 3, 3, 0, 1 };
 static const uint8_t hulk_f17_r0[30] = {
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0x00,0xff,0x00,
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -952,7 +952,7 @@ static const uint8_t hulk_f17_r2[30] = {
 static const uint8_t* const hulk_f17_rows[] = {
     hulk_f17_r0,hulk_f17_r1,hulk_f17_r2
 };
-static const SpriteFrame hulk_f17 = { hulk_f17_rows, 3, 3, 1, 1 };
+static const SpriteFrame hulk_f17 = { hulk_f17_rows, 3, 3, 0, 1 };
 static const uint8_t hulk_f18_r0[30] = {
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0x00,0xff,0x00,
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -968,7 +968,7 @@ static const uint8_t hulk_f18_r2[30] = {
 static const uint8_t* const hulk_f18_rows[] = {
     hulk_f18_r0,hulk_f18_r1,hulk_f18_r2
 };
-static const SpriteFrame hulk_f18 = { hulk_f18_rows, 3, 3, 1, 1 };
+static const SpriteFrame hulk_f18 = { hulk_f18_rows, 3, 3, 0, 1 };
 static const uint8_t hulk_f19_r0[30] = {
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0x00,0xff,0x00,
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -984,7 +984,7 @@ static const uint8_t hulk_f19_r2[30] = {
 static const uint8_t* const hulk_f19_rows[] = {
     hulk_f19_r0,hulk_f19_r1,hulk_f19_r2
 };
-static const SpriteFrame hulk_f19 = { hulk_f19_rows, 3, 3, 1, 1 };
+static const SpriteFrame hulk_f19 = { hulk_f19_rows, 3, 3, 0, 1 };
 static const uint8_t hulk_f20_r0[30] = {
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0x00,0xff,0x00,
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -1000,7 +1000,7 @@ static const uint8_t hulk_f20_r2[30] = {
 static const uint8_t* const hulk_f20_rows[] = {
     hulk_f20_r0,hulk_f20_r1,hulk_f20_r2
 };
-static const SpriteFrame hulk_f20 = { hulk_f20_rows, 3, 3, 1, 1 };
+static const SpriteFrame hulk_f20 = { hulk_f20_rows, 3, 3, 0, 1 };
 static const uint8_t hulk_f21_r0[30] = {
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0x00,0xff,0x00,
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -1016,7 +1016,7 @@ static const uint8_t hulk_f21_r2[30] = {
 static const uint8_t* const hulk_f21_rows[] = {
     hulk_f21_r0,hulk_f21_r1,hulk_f21_r2
 };
-static const SpriteFrame hulk_f21 = { hulk_f21_rows, 3, 3, 1, 1 };
+static const SpriteFrame hulk_f21 = { hulk_f21_rows, 3, 3, 0, 1 };
 static const uint8_t hulk_f22_r0[30] = {
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0x00,0xff,0x00,
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -1032,7 +1032,7 @@ static const uint8_t hulk_f22_r2[30] = {
 static const uint8_t* const hulk_f22_rows[] = {
     hulk_f22_r0,hulk_f22_r1,hulk_f22_r2
 };
-static const SpriteFrame hulk_f22 = { hulk_f22_rows, 3, 3, 1, 1 };
+static const SpriteFrame hulk_f22 = { hulk_f22_rows, 3, 3, 0, 1 };
 static const SpriteFrame hulk_frames[] = {
     hulk_f0,
     hulk_f1,
@@ -1084,11 +1084,11 @@ static const int hulk_walk_e[] = {
 
 static const SpriteSet sprite_hulk_set = {
     "Hulk", 23, hulk_frames,
-    { /* N, S, W, E -- {indices, count, step, ox, oy} */
-        { hulk_walk_n, 7, 4, 0, 0 }, /* N */
-        { hulk_walk_s, 23, 4, 0, 0 }, /* S */
-        { hulk_walk_w, 8, 4, 0, 0 }, /* W */
-        { hulk_walk_e, 23, 4, 0, 0 } /* E */
+    { /* N, S, W, E -- {indices, count, step, ox, oy, scale_x, scale_y} */
+        { hulk_walk_n, 7, 4, 0, 0, 4, 4 }, /* N */
+        { hulk_walk_s, 23, 4, 0, 0, 4, 4 }, /* S */
+        { hulk_walk_w, 8, 4, 0, 0, 4, 4 }, /* W */
+        { hulk_walk_e, 23, 4, 0, 0, 4, 4 } /* E */
     }
 };
 
@@ -1101,7 +1101,7 @@ static const uint8_t spheroid_f0_r0[20] = {
 static const uint8_t* const spheroid_f0_rows[] = {
     spheroid_f0_r0
 };
-static const SpriteFrame spheroid_f0 = { spheroid_f0_rows, 2, 1, 3, 3 };
+static const SpriteFrame spheroid_f0 = { spheroid_f0_rows, 2, 1, 1, 2 };
 static const uint8_t spheroid_f1_r0[40] = {
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xe7,0x00,0x00,
     0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xe7,0x00,0x00,0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -1117,7 +1117,7 @@ static const uint8_t spheroid_f1_r2[40] = {
 static const uint8_t* const spheroid_f1_rows[] = {
     spheroid_f1_r0,spheroid_f1_r1,spheroid_f1_r2
 };
-static const SpriteFrame spheroid_f1 = { spheroid_f1_rows, 4, 3, 3, 2 };
+static const SpriteFrame spheroid_f1 = { spheroid_f1_rows, 4, 3, 2, 2 };
 static const uint8_t spheroid_f2_r0[60] = {
     0xe2,0x96,0x97,0x00, 0xe7,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x86,0x00, 0xe7,0x00,0x00, 0x00,0x00,0x00,
     0xe2,0x96,0x80,0x00, 0xe7,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0xe7,0x00,0x00, 0x00,0x00,0x00,
@@ -1146,7 +1146,7 @@ static const uint8_t spheroid_f3_r1[20] = {
 static const uint8_t* const spheroid_f3_rows[] = {
     spheroid_f3_r0,spheroid_f3_r1
 };
-static const SpriteFrame spheroid_f3 = { spheroid_f3_rows, 2, 2, 3, 3 };
+static const SpriteFrame spheroid_f3 = { spheroid_f3_rows, 2, 2, 1, 2 };
 static const uint8_t spheroid_f4_r0[40] = {
     0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xe7,0x00,0x00,0xe2,0x96,0x80,0x00, 0xe7,0x00,0x00, 0x00,0x00,0x00,
     0xe2,0x96,0x80,0x00, 0xe7,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xe7,0x00,0x00
@@ -1158,7 +1158,7 @@ static const uint8_t spheroid_f4_r1[40] = {
 static const uint8_t* const spheroid_f4_rows[] = {
     spheroid_f4_r0,spheroid_f4_r1
 };
-static const SpriteFrame spheroid_f4 = { spheroid_f4_rows, 4, 2, 3, 1 };
+static const SpriteFrame spheroid_f4 = { spheroid_f4_rows, 4, 2, 2, 0 };
 static const uint8_t spheroid_f5_r0[60] = {
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x82,0x00, 0xe7,0x00,0x00, 0x00,0x00,0x00,
     0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xe7,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xe7,0x00,0x00,
@@ -1214,11 +1214,11 @@ static const int spheroid_walk_e[] = {
 
 static const SpriteSet sprite_spheroid_set = {
     "Spheroid", 6, spheroid_frames,
-    { /* N, S, W, E -- {indices, count, step, ox, oy} */
-        { spheroid_walk_n, 6, 2, 0, 0 }, /* N */
-        { spheroid_walk_s, 6, 2, 0, 0 }, /* S */
-        { spheroid_walk_w, 6, 2, 0, 0 }, /* W */
-        { spheroid_walk_e, 6, 2, 0, 0 } /* E */
+    { /* N, S, W, E -- {indices, count, step, ox, oy, scale_x, scale_y} */
+        { spheroid_walk_n, 6, 2, 0, 0, 4, 4 }, /* N */
+        { spheroid_walk_s, 6, 2, 0, 0, 4, 4 }, /* S */
+        { spheroid_walk_w, 6, 2, 0, 0, 4, 4 }, /* W */
+        { spheroid_walk_e, 6, 2, 0, 0, 4, 4 } /* E */
     }
 };
 
@@ -1284,11 +1284,11 @@ static const int enforcer_walk_e[] = {
 
 static const SpriteSet sprite_enforcer_set = {
     "Enforcer", 2, enforcer_frames,
-    { /* N, S, W, E -- {indices, count, step, ox, oy} */
-        { enforcer_walk_n, 2, 2, 0, 0 }, /* N */
-        { enforcer_walk_s, 2, 2, 0, 0 }, /* S */
-        { enforcer_walk_w, 2, 2, 0, 0 }, /* W */
-        { enforcer_walk_e, 2, 2, 0, 0 } /* E */
+    { /* N, S, W, E -- {indices, count, step, ox, oy, scale_x, scale_y} */
+        { enforcer_walk_n, 2, 2, 0, 0, 4, 4 }, /* N */
+        { enforcer_walk_s, 2, 2, 0, 0, 4, 4 }, /* S */
+        { enforcer_walk_w, 2, 2, 0, 0, 4, 4 }, /* W */
+        { enforcer_walk_e, 2, 2, 0, 0, 4, 4 } /* E */
     }
 };
 
@@ -1419,7 +1419,7 @@ static const uint8_t mommy_f6_r2[20] = {
 static const uint8_t* const mommy_f6_rows[] = {
     mommy_f6_r0,mommy_f6_r1,mommy_f6_r2
 };
-static const SpriteFrame mommy_f6 = { mommy_f6_rows, 2, 3, 1, 1 };
+static const SpriteFrame mommy_f6 = { mommy_f6_rows, 2, 3, 0, 1 };
 static const uint8_t mommy_f7_r0[30] = {
     0xe2,0x96,0x97,0x00, 0xfc,0xf0,0x9c, 0x00,0x00,0x00,0x20,0x00,0x00,0x00, 0xfc,0xf0,0x9c, 0xfc,0xf0,0x9c,
     0xe2,0x96,0x96,0x00, 0xfc,0xf0,0x9c, 0x00,0x00,0x00
@@ -1480,7 +1480,7 @@ static const uint8_t mommy_f10_r2[20] = {
 static const uint8_t* const mommy_f10_rows[] = {
     mommy_f10_r0,mommy_f10_r1,mommy_f10_r2
 };
-static const SpriteFrame mommy_f10 = { mommy_f10_rows, 2, 3, 1, 1 };
+static const SpriteFrame mommy_f10 = { mommy_f10_rows, 2, 3, 0, 1 };
 static const uint8_t mommy_f11_r0[30] = {
     0xe2,0x96,0x97,0x00, 0xfc,0xf0,0x9c, 0x00,0x00,0x00,0x20,0x00,0x00,0x00, 0xfc,0xf0,0x9c, 0xfc,0xf0,0x9c,
     0xe2,0x96,0x96,0x00, 0xfc,0xf0,0x9c, 0x00,0x00,0x00
@@ -1589,7 +1589,7 @@ static const uint8_t mommy_f17_r2[20] = {
 static const uint8_t* const mommy_f17_rows[] = {
     mommy_f17_r0,mommy_f17_r1,mommy_f17_r2
 };
-static const SpriteFrame mommy_f17 = { mommy_f17_rows, 2, 3, 1, 1 };
+static const SpriteFrame mommy_f17 = { mommy_f17_rows, 2, 3, 0, 1 };
 static const uint8_t mommy_f18_r0[30] = {
     0xe2,0x96,0x97,0x00, 0xfc,0xf0,0x9c, 0x00,0x00,0x00,0x20,0x00,0x00,0x00, 0xfc,0xf0,0x9c, 0xfc,0xf0,0x9c,
     0xe2,0x96,0x96,0x00, 0xfc,0xf0,0x9c, 0x00,0x00,0x00
@@ -1650,7 +1650,7 @@ static const uint8_t mommy_f21_r2[20] = {
 static const uint8_t* const mommy_f21_rows[] = {
     mommy_f21_r0,mommy_f21_r1,mommy_f21_r2
 };
-static const SpriteFrame mommy_f21 = { mommy_f21_rows, 2, 3, 1, 1 };
+static const SpriteFrame mommy_f21 = { mommy_f21_rows, 2, 3, 0, 1 };
 static const SpriteFrame mommy_frames[] = {
     mommy_f0,
     mommy_f1,
@@ -1689,21 +1689,19 @@ static const int mommy_walk_s[] = {
     0,1,2
 };
 static const int mommy_walk_w[] = {
-    14,15,16,17,18,19,20,21
+    6,7,8,9,6,11,12,13,1835888461,121,0,0,0,0,0,0,32,0,-1763573760,128,-354828544,8427234
 };
 static const int mommy_walk_e[] = {
-    0,1,2,3,4,5,6,7,
-    8,9,10,11,12,13,14,15,
-    16,17,18,19,20,21
+    18,15,16,21,18,19,20,21
 };
 
 static const SpriteSet sprite_mommy_set = {
     "Mommy", 22, mommy_frames,
-    { /* N, S, W, E -- {indices, count, step, ox, oy} */
-        { mommy_walk_n, 3, 4, 0, 0 }, /* N */
-        { mommy_walk_s, 3, 4, 0, 0 }, /* S */
-        { mommy_walk_w, 8, 4, 0, 0 }, /* W */
-        { mommy_walk_e, 22, 4, 0, 0 } /* E */
+    { /* N, S, W, E -- {indices, count, step, ox, oy, scale_x, scale_y} */
+        { mommy_walk_n, 3, 4, 0, 0, 4, 4 }, /* N */
+        { mommy_walk_s, 3, 4, 0, 0, 4, 4 }, /* S */
+        { mommy_walk_w, 8, 4, 0, 0, 4, 4 }, /* W */
+        { mommy_walk_e, 22, 4, 0, 0, 1, 1 } /* E */
     }
 };
 
@@ -1818,7 +1816,7 @@ static const uint8_t daddy_f6_r2[20] = {
 static const uint8_t* const daddy_f6_rows[] = {
     daddy_f6_r0,daddy_f6_r1,daddy_f6_r2
 };
-static const SpriteFrame daddy_f6 = { daddy_f6_rows, 2, 3, 1, 1 };
+static const SpriteFrame daddy_f6 = { daddy_f6_rows, 2, 3, 0, 1 };
 static const uint8_t daddy_f7_r0[30] = {
     0xe2,0x96,0x97,0x00, 0xbf,0xd9,0xea, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xbf,0xd9,0xea,
     0xe2,0x96,0x96,0x00, 0xbf,0xd9,0xea, 0x00,0x00,0x00
@@ -1879,7 +1877,7 @@ static const uint8_t daddy_f10_r2[20] = {
 static const uint8_t* const daddy_f10_rows[] = {
     daddy_f10_r0,daddy_f10_r1,daddy_f10_r2
 };
-static const SpriteFrame daddy_f10 = { daddy_f10_rows, 2, 3, 1, 1 };
+static const SpriteFrame daddy_f10 = { daddy_f10_rows, 2, 3, 0, 1 };
 static const uint8_t daddy_f11_r0[30] = {
     0xe2,0x96,0x97,0x00, 0xbf,0xd9,0xea, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xbf,0xd9,0xea,
     0xe2,0x96,0x96,0x00, 0xbf,0xd9,0xea, 0x00,0x00,0x00
@@ -1988,7 +1986,7 @@ static const uint8_t daddy_f17_r2[20] = {
 static const uint8_t* const daddy_f17_rows[] = {
     daddy_f17_r0,daddy_f17_r1,daddy_f17_r2
 };
-static const SpriteFrame daddy_f17 = { daddy_f17_rows, 2, 3, 1, 1 };
+static const SpriteFrame daddy_f17 = { daddy_f17_rows, 2, 3, 0, 1 };
 static const uint8_t daddy_f18_r0[30] = {
     0xe2,0x96,0x97,0x00, 0xbf,0xd9,0xea, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xbf,0xd9,0xea,
     0xe2,0x96,0x96,0x00, 0xbf,0xd9,0xea, 0x00,0x00,0x00
@@ -2049,7 +2047,7 @@ static const uint8_t daddy_f21_r2[20] = {
 static const uint8_t* const daddy_f21_rows[] = {
     daddy_f21_r0,daddy_f21_r1,daddy_f21_r2
 };
-static const SpriteFrame daddy_f21 = { daddy_f21_rows, 2, 3, 1, 1 };
+static const SpriteFrame daddy_f21 = { daddy_f21_rows, 2, 3, 0, 1 };
 static const SpriteFrame daddy_frames[] = {
     daddy_f0,
     daddy_f1,
@@ -2098,11 +2096,11 @@ static const int daddy_walk_e[] = {
 
 static const SpriteSet sprite_daddy_set = {
     "Daddy", 22, daddy_frames,
-    { /* N, S, W, E -- {indices, count, step, ox, oy} */
-        { daddy_walk_n, 3, 4, 0, 0 }, /* N */
-        { daddy_walk_s, 3, 4, 0, 0 }, /* S */
-        { daddy_walk_w, 8, 4, 0, 0 }, /* W */
-        { daddy_walk_e, 22, 4, 0, 0 } /* E */
+    { /* N, S, W, E -- {indices, count, step, ox, oy, scale_x, scale_y} */
+        { daddy_walk_n, 3, 4, 0, 0, 4, 4 }, /* N */
+        { daddy_walk_s, 3, 4, 0, 0, 4, 4 }, /* S */
+        { daddy_walk_w, 8, 4, 0, 0, 4, 4 }, /* W */
+        { daddy_walk_e, 22, 4, 0, 0, 4, 4 } /* E */
     }
 };
 
@@ -2217,7 +2215,7 @@ static const uint8_t mikey_f6_r2[20] = {
 static const uint8_t* const mikey_f6_rows[] = {
     mikey_f6_r0,mikey_f6_r1,mikey_f6_r2
 };
-static const SpriteFrame mikey_f6 = { mikey_f6_rows, 2, 3, 1, 1 };
+static const SpriteFrame mikey_f6 = { mikey_f6_rows, 2, 3, 0, 1 };
 static const uint8_t mikey_f7_r0[30] = {
     0x20,0x00,0x00,0x00, 0xff,0xaf,0x5f, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xff,0xaf,0x5f,
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -2278,7 +2276,7 @@ static const uint8_t mikey_f10_r2[20] = {
 static const uint8_t* const mikey_f10_rows[] = {
     mikey_f10_r0,mikey_f10_r1,mikey_f10_r2
 };
-static const SpriteFrame mikey_f10 = { mikey_f10_rows, 2, 3, 1, 1 };
+static const SpriteFrame mikey_f10 = { mikey_f10_rows, 2, 3, 0, 1 };
 static const uint8_t mikey_f11_r0[30] = {
     0x20,0x00,0x00,0x00, 0xff,0xaf,0x5f, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xff,0xaf,0x5f,
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -2387,7 +2385,7 @@ static const uint8_t mikey_f17_r2[20] = {
 static const uint8_t* const mikey_f17_rows[] = {
     mikey_f17_r0,mikey_f17_r1,mikey_f17_r2
 };
-static const SpriteFrame mikey_f17 = { mikey_f17_rows, 2, 3, 1, 1 };
+static const SpriteFrame mikey_f17 = { mikey_f17_rows, 2, 3, 0, 1 };
 static const uint8_t mikey_f18_r0[30] = {
     0x20,0x00,0x00,0x00, 0xff,0xaf,0x5f, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xff,0xaf,0x5f,
     0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
@@ -2448,7 +2446,7 @@ static const uint8_t mikey_f21_r2[20] = {
 static const uint8_t* const mikey_f21_rows[] = {
     mikey_f21_r0,mikey_f21_r1,mikey_f21_r2
 };
-static const SpriteFrame mikey_f21 = { mikey_f21_rows, 2, 3, 1, 1 };
+static const SpriteFrame mikey_f21 = { mikey_f21_rows, 2, 3, 0, 1 };
 static const SpriteFrame mikey_frames[] = {
     mikey_f0,
     mikey_f1,
@@ -2497,15 +2495,104 @@ static const int mikey_walk_e[] = {
 
 static const SpriteSet sprite_mikey_set = {
     "Mikey", 22, mikey_frames,
-    { /* N, S, W, E -- {indices, count, step, ox, oy} */
-        { mikey_walk_n, 3, 4, 0, 0 }, /* N */
-        { mikey_walk_s, 3, 4, 0, 0 }, /* S */
-        { mikey_walk_w, 8, 4, 0, 0 }, /* W */
-        { mikey_walk_e, 22, 4, 0, 0 } /* E */
+    { /* N, S, W, E -- {indices, count, step, ox, oy, scale_x, scale_y} */
+        { mikey_walk_n, 3, 4, 0, 0, 4, 4 }, /* N */
+        { mikey_walk_s, 3, 4, 0, 0, 4, 4 }, /* S */
+        { mikey_walk_w, 8, 4, 0, 0, 4, 4 }, /* W */
+        { mikey_walk_e, 22, 4, 0, 0, 4, 4 } /* E */
     }
 };
 
 #define HAVE_SPRITE_MIKEY 1
+
+/* === terror === */
+static const uint8_t terror_f0_r0[30] = {
+    0xe2,0x96,0x80,0x00, 0xff,0x00,0xff, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xff,0x00,0xff,
+    0xe2,0x96,0x80,0x00, 0xff,0x00,0xff, 0x00,0x00,0x00
+};
+static const uint8_t terror_f0_r1[30] = {
+    0xe2,0x96,0x80,0x00, 0xff,0x00,0xff, 0x00,0x00,0x00,0x20,0x00,0x00,0x00, 0xff,0x00,0xff, 0x00,0x00,0x00,
+    0xe2,0x96,0x80,0x00, 0xff,0x00,0xff, 0x00,0x00,0x00
+};
+static const uint8_t* const terror_f0_rows[] = {
+    terror_f0_r0,terror_f0_r1
+};
+static const SpriteFrame terror_f0 = { terror_f0_rows, 3, 2, 1, 1 };
+static const uint8_t terror_f1_r0[30] = {
+    0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xff,0x00,0xff,0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0xff,0x00,0xff,
+    0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xff,0x00,0xff
+};
+static const uint8_t terror_f1_r1[30] = {
+    0x20,0x00,0x00,0x00, 0xff,0x00,0xff, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0xff,0x00,0xff, 0x00,0x00,0x00,
+    0x20,0x00,0x00,0x00, 0xff,0x00,0xff, 0x00,0x00,0x00
+};
+static const uint8_t* const terror_f1_rows[] = {
+    terror_f1_r0,terror_f1_r1
+};
+static const SpriteFrame terror_f1 = { terror_f1_rows, 3, 2, 1, 1 };
+static const uint8_t terror_f2_r0[30] = {
+    0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xff,0x00,0xff,0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,
+    0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xff,0x00,0xff
+};
+static const uint8_t terror_f2_r1[30] = {
+    0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xff,0x00,0xff,0xe2,0x96,0x80,0x00, 0xff,0x00,0xff, 0x00,0x00,0x00,
+    0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xff,0x00,0xff
+};
+static const uint8_t* const terror_f2_rows[] = {
+    terror_f2_r0,terror_f2_r1
+};
+static const SpriteFrame terror_f2 = { terror_f2_rows, 3, 2, 1, 1 };
+static const uint8_t terror_f3_r0[30] = {
+    0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00,0xe2,0x96,0x80,0x00, 0x00,0x00,0x00, 0xff,0x00,0xff,
+    0x20,0x00,0x00,0x00, 0x00,0x00,0x00, 0x00,0x00,0x00
+};
+static const uint8_t terror_f3_r1[30] = {
+    0xe2,0x96,0x80,0x00, 0xff,0x00,0xff, 0x00,0x00,0x00,0x20,0x00,0x00,0x00, 0xff,0x00,0xff, 0xff,0x00,0xff,
+    0xe2,0x96,0x80,0x00, 0xff,0x00,0xff, 0x00,0x00,0x00
+};
+static const uint8_t* const terror_f3_rows[] = {
+    terror_f3_r0,terror_f3_r1
+};
+static const SpriteFrame terror_f3 = { terror_f3_rows, 3, 2, 1, 1 };
+static const SpriteFrame terror_frames[] = {
+    terror_f0,
+    terror_f1,
+    terror_f2,
+    terror_f3
+};
+
+/* --- Terror walk-cycle tables (HAND-EDITABLE) ---
+ * Each entry is an index into terror_frames[].
+ * Edit freely to reorder, reuse, or build ping-pong cycles.
+ * No 'Facing:' tags in source .ans -- all 4 facings
+ * default to ALL 4 frames.  Reassign by editing the
+ * numeric literals below.
+ */
+static const int terror_walk_n[] = {
+    0,1,2,3
+};
+static const int terror_walk_s[] = {
+    0,1,2,3
+};
+static const int terror_walk_w[] = {
+    0,1,2,3
+};
+static const int terror_walk_e[] = {
+    0,1,2,3
+};
+
+static const SpriteSet sprite_terror_set = {
+    "Terror", 4, terror_frames,
+    { /* N, S, W, E -- {indices, count, step, ox, oy} */
+        { terror_walk_n, 4, 1, 0, 0 }, /* N */
+        { terror_walk_s, 4, 1, 0, 0 }, /* S */
+        { terror_walk_w, 4, 1, 0, 0 }, /* W */
+        { terror_walk_e, 4, 1, 0, 0 } /* E */
+    }
+};
+
+#define HAVE_SPRITE_TERROR 1
+
 
 /* === electrode === */
 static const uint8_t electrode_f0_r0[40] = {
@@ -2600,11 +2687,11 @@ static const int electrode_walk_e[] = {
 
 static const SpriteSet sprite_electrode_set = {
     "Electrode", 5, electrode_frames,
-    { /* N, S, W, E -- {indices, count, step, ox, oy} */
-        { electrode_walk_n, 5, 1, 0, 0 }, /* N */
-        { electrode_walk_s, 5, 1, 0, 0 }, /* S */
-        { electrode_walk_w, 5, 1, 0, 0 }, /* W */
-        { electrode_walk_e, 5, 1, 0, 0 } /* E */
+    { /* N, S, W, E -- {indices, count, step, ox, oy, scale_x, scale_y} */
+        { electrode_walk_n, 5, 1, 0, 0, 4, 4 }, /* N */
+        { electrode_walk_s, 5, 1, 0, 0, 4, 4 }, /* S */
+        { electrode_walk_w, 5, 1, 0, 0, 4, 4 }, /* W */
+        { electrode_walk_e, 5, 1, 0, 0, 4, 4 } /* E */
     }
 };
 

@@ -89,7 +89,7 @@
 #define FIXED_0_707   11585  // 0.707 in 16.16 fixed-point (= 11585/16384) for diagonal speed normalization
 #define LASER_SPEED    150
 #define FIRE_COOLDOWN    6
-#define PLAYER_SPEED    56  // TODO WAS 64 - maybe make it variable
+#define PLAYER_SPEED    64
 #define HULK_SPEED      64
 #define HUMAN_SPEED     32   /* 0.5x HULK_SPEED -- hulks catch up over ~2 screens of travel */
 #define GRUNT_SPEED    200
@@ -2918,15 +2918,19 @@ static int entity_select_frame(EntityType type, int16_t wx, int16_t wy,
             if (half_rows < 0) half_rows = 0;
             return (int)(half_rows & 1);
         }
-        case ENT_HULK: {
+        case ENT_HULK:
+        case ENT_HUMAN: {
             // Stride cycle along the axis of motion.  spatial_stride
             // (read from fi->step_period) = cells per base frame advance;
             // spatial_scale (from fi->scale_x/y) multiplies the advance
             // rate -- bigger scale = faster animation.  See stride_cycle()
             // for the inverted-math rationale.
             //
-            // The Hulk is purely positional: no temporal counter, no
-            // bank selection -- the stride IS the frame index.
+            // Both Hulk and Human use purely positional animation: no
+            // temporal counter, no bank selection -- the stride IS the
+            // frame index.  Humans share the same scheme so their walk
+            // cycles advance naturally with movement distance, one frame
+            // per half-cell when scale = 2 * step_period.
             (void)anim_phase;
             int axis = (facing_dir == DIR_UP || facing_dir == DIR_DOWN) ? 1 : 0;
             int16_t pos = axis ? wy : wx;
