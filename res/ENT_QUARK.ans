@@ -1,0 +1,94 @@
+Index: 0
+Character: Quark
+Facing: NSWE
+FrameNo: 0
+OffsetX: 0
+OffsetY: 0
+HotspotX: 0
+HotspotY: 0
+
+[38;2;196;0;255m[48;2;0;0;0m▀[0m
+
+Index: 1
+Character: Quark
+Facing: NSWE
+FrameNo: 1
+OffsetX: 0
+OffsetY: 0
+HotspotX: 1
+HotspotY: 1
+HalfShift: true
+
+[38;2;0;0;0m[48;2;196;0;255m▀[38;2;0;179;255m[48;2;0;0;0m▁[38;2;0;0;0m[48;2;196;0;255m▀[0m
+[38;2;0;0;0m[48;2;196;0;255m▀[48;2;0;179;255m▂[48;2;196;0;255m▀[0m
+
+Index: 2
+Character: Quark
+Facing: NSWE
+FrameNo: 2
+OffsetX: 0
+OffsetY: 0
+HotspotX: 2
+HotspotY: 1
+
+[38;2;0;0;0m[48;2;196;0;255m  [48;2;0;179;255m▀[48;2;196;0;255m  [0m
+[38;2;0;0;0m[48;2;196;0;255m▀[38;2;0;179;255m▀[48;2;0;179;255m [48;2;196;0;255m▀[38;2;0;0;0m▀[0m
+[38;2;196;0;255m[48;2;0;0;0m▀▀ ▀▀[0m
+
+Index: 3
+Character: Quark
+Facing: WHEH
+FrameNo: 0
+OffsetX: 0
+OffsetY: 0
+HotspotX: 0
+HotspotY: 0
+
+[38;2;196;0;255m[48;2;0;0;0m▄[0m
+
+Index: 4
+Character: Quark
+Facing: WHEH
+FrameNo: 1
+OffsetX: 0
+OffsetY: 0
+HotspotX: 1
+HotspotY: 1
+HalfShift: true
+
+[38;2;196;0;255m[48;2;0;0;0m▀[38;2;0;179;255m▅[38;2;196;0;255m▀[0m
+[38;2;196;0;255m[48;2;0;0;0m▀[38;2;0;0;0m[48;2;0;179;255m▆[38;2;196;0;255m[48;2;0;0;0m▀[0m
+
+Index: 5
+Character: Quark
+Facing: WHEH
+FrameNo: 3
+OffsetX: 0
+OffsetY: 0
+HotspotX: 2
+HotspotY: 1
+HalfShift: true
+
+[38;2;0;0;0m[48;2;196;0;255m▀▀[48;2;0;0;0m [48;2;196;0;255m▀▀[0m
+[38;2;196;0;255m[48;2;0;0;0m▀[48;2;0;179;255m▀ ▀[48;2;0;0;0m▀[0m
+[38;2;196;0;255m[48;2;196;0;255m  [38;2;0;179;255m[48;2;0;0;0m▀[48;2;196;0;255m  [0m
+
+
+# Walk Tables (edited by spredit.py)
+WalkTable: N
+  0, 1, 2
+
+WalkTable: S
+  3, 4, 5
+
+WalkTable: W
+  0, 4, 2
+
+WalkTable: E
+  3, 1, 5, 2, 4, 0
+
+WalkTable: WH
+  3, 1, 5
+
+WalkTable: EH
+  5, 1, 3

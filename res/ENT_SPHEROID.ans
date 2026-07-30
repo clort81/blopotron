@@ -1,0 +1,97 @@
+Index: 11
+Character: Spheroid
+Facing: NSWE
+FrameNo: 0
+OffsetX: 2
+OffsetY: 1
+HotspotX: 1
+HotspotY: 1
+
+[38;2;231;0;0m[48;2;0;0;0m██[0m
+
+Index: 12
+Character: Spheroid
+Facing: NSWE
+FrameNo: 1
+OffsetX: 1
+OffsetY: 0
+HotspotX: 2
+HotspotY: 1
+HalfShift: true
+
+[38;2;0;0;0m[48;2;0;0;0m [48;2;231;0;0m▀▀[48;2;0;0;0m [0m
+[38;2;0;0;0m[48;2;231;0;0m [48;2;0;0;0m  [48;2;231;0;0m [0m
+[38;2;0;0;0m[48;2;0;0;0m [38;2;231;0;0m▀▀ [0m
+
+Index: 13
+Character: Spheroid
+Facing: NSWE
+FrameNo: 2
+OffsetX: 1
+OffsetY: 0
+HotspotX: 3
+HotspotY: 1
+
+[38;2;231;0;0m[48;2;0;0;0m▗▆▀▀▆▖[0m
+[38;2;0;0;0m[48;2;231;0;0m [48;2;0;0;0m    [48;2;231;0;0m [0m
+[38;2;231;0;0m[48;2;0;0;0m▝[38;2;0;0;0m[48;2;231;0;0m▂▀▀▂[38;2;231;0;0m[48;2;0;0;0m▘[0m
+
+Index: 14
+Character: Spheroid
+Facing: NSWE
+FrameNo: 0
+OffsetX: 2
+OffsetY: 1
+HotspotX: 1
+HotspotY: 1
+HalfShift: true
+
+[38;2;231;0;0m[48;2;0;0;0m▅▅[0m
+[38;2;231;0;0m[48;2;0;0;0m▀▀[0m
+
+Index: 15
+Character: Spheroid
+Facing: NSWE
+FrameNo: 1
+OffsetX: 1
+OffsetY: 0
+HotspotX: 2
+HotspotY: 1
+
+[38;2;231;0;0m[48;2;0;0;0m▅[38;2;231;0;0m[48;2;0;0;0m▀▀[38;2;231;0;0m[48;2;0;0;0m▅[0m
+[38;2;231;0;0m[48;2;0;0;0m▀[38;2;231;0;0m[48;2;0;0;0m▅▅[38;2;231;0;0m[48;2;0;0;0m▀[0m
+
+Index: 16
+Character: Spheroid
+Facing: NSWE
+FrameNo: 2
+OffsetX: 0
+OffsetY: 0
+HotspotX: 3
+HotspotY: 2
+HalfShift: true
+
+[38;2;0;0;0m[48;2;0;0;0m [38;2;231;0;0m▂[38;2;0;0;0m[48;2;231;0;0m▀▀[38;2;231;0;0m[48;2;0;0;0m▂ [0m
+[38;2;0;0;0m[48;2;231;0;0m▘▅[48;2;0;0;0m  [48;2;231;0;0m▅▝[0m
+[38;2;0;0;0m[48;2;231;0;0m▖[38;2;231;0;0m[48;2;0;0;0m▂  ▂[38;2;0;0;0m[48;2;231;0;0m▗[0m
+[38;2;0;0;0m[48;2;0;0;0m [48;2;231;0;0m▅▃▃▅[48;2;0;0;0m [0m
+
+
+# Walk Tables (edited by spredit.py)
+WalkTable: N
+  0, 1, 2, 3, 4, 5
+
+WalkTable: S
+  5, 4, 3, 2, 1, 0
+
+WalkTable: W
+  4, 2
+
+WalkTable: E
+  2, 4, 0
+
+WalkTable: WH
+  3, 1, 5
+
+WalkTable: EH
+  5, 1, 3

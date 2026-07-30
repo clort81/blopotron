@@ -1,0 +1,67 @@
+Index: 0
+Character: Electrodes
+Facing: 
+FrameNo: 0
+OffsetX: 0
+OffsetY: 0
+HotspotX: 2
+HotspotY: 1
+
+[38;2;242;210;41m[48;2;0;0;0m▬[38;2;0;0;0m[48;2;242;210;41m▖▗[38;2;242;210;41m[48;2;0;0;0m▬[0m
+[38;2;242;210;41m[48;2;0;0;0m▬[38;2;0;0;0m[48;2;242;210;41m▘▝[38;2;242;210;41m[48;2;0;0;0m▬[0m
+Index: 1
+Character: Electrodes
+Facing: 
+FrameNo: 1
+OffsetX: 0
+OffsetY: 0
+HotspotX: 2
+HotspotY: 1
+
+[38;2;242;166;41m[48;2;0;0;0m▬▂[48;2;242;166;41m [48;2;0;0;0m▂▬[0m
+[38;2;242;166;41m[48;2;0;0;0m▬[38;2;0;0;0m[48;2;242;166;41m▅ ▅[38;2;242;166;41m[48;2;0;0;0m▬[0m
+Index: 2
+Character: Electrodes
+Facing: 
+FrameNo: 2
+OffsetX: 0
+OffsetY: 0
+HotspotX: 2
+HotspotY: 1
+
+[38;2;58;169;255m[48;2;0;0;0m▞▞[38;2;0;0;0m[48;2;58;169;255m▞▞[0m
+[38;2;0;0;0m[48;2;58;169;255m▞▞[38;2;58;169;255m[48;2;0;0;0m▞▞[0m
+Index: 3
+Character: Electrodes
+Facing: 
+FrameNo: 3
+OffsetX: 0
+OffsetY: 0
+HotspotX: 2
+HotspotY: 1
+
+[38;2;245;69;69m[48;2;0;0;0m▋▅▅[38;2;0;0;0m[48;2;245;69;69m▋[0m
+[38;2;245;69;69m[48;2;0;0;0m▋[38;2;0;0;0m[48;2;245;69;69m▃▃▋[0m
+Index: 4
+Character: Electrodes
+Facing: 
+FrameNo: 4
+OffsetX: 0
+OffsetY: 0
+HotspotX: 2
+HotspotY: 1
+
+[38;2;0;0;0m[48;2;0;0;0m  [48;2;217;4;130m▀ [0m
+[38;2;0;0;0m[48;2;217;4;130m▀   [0m
+Index: 5
+Character: Electrodes
+Facing: 
+FrameNo: 5
+OffsetX: 0
+OffsetY: 0
+HotspotX: 2
+HotspotY: 1
+
+[38;2;0;255;0m[48;2;0;0;0m▐[38;2;0;0;0m[48;2;0;255;0m▅▬▅▖[0m
+[38;2;0;255;0m[48;2;0;0;0m▝▅▅[38;2;0;0;0m[48;2;0;255;0m▂[38;2;0;255;0m[48;2;0;0;0m▐[0m
+[38;2;0;0;0m[48;2;0;0;0m  [38;2;0;255;0m▬▬▀[0m

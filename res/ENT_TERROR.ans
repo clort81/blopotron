@@ -1,0 +1,69 @@
+Index: 1
+Character: Terror
+Facing: NSWE
+FrameNo: 0
+OffsetX: 0
+OffsetY: 0
+HotspotX: 1
+HotspotY: 1
+
+[38;2;255;0;255m[48;2;0;0;0m▀[38;2;0;0;0m[48;2;255;0;255m▀[38;2;255;0;255m[48;2;0;0;0m▀[0m
+[38;2;255;0;255m[48;2;0;0;0m▀ ▀[0m
+
+Index: 2
+Character: Terror
+Facing: NSWE
+FrameNo: 1
+OffsetX: 0
+OffsetY: 0
+HotspotX: 1
+HotspotY: 1
+
+[38;2;0;0;0m[48;2;255;0;255m▀ ▀[0m
+[38;2;255;0;255m[48;2;0;0;0m ▀ [0m
+
+Index: 3
+Character: Terror
+Facing: NSWE
+FrameNo: 2
+OffsetX: 0
+OffsetY: 0
+HotspotX: 1
+HotspotY: 1
+HalfShift: true
+
+[38;2;0;0;0m[48;2;255;0;255m▀[48;2;0;0;0m [48;2;255;0;255m▀[0m
+[38;2;0;0;0m[48;2;255;0;255m▀[38;2;255;0;255m[48;2;0;0;0m▀[38;2;0;0;0m[48;2;255;0;255m▀[0m
+
+Index: 4
+Character: Terror
+Facing: NSWE
+FrameNo: 3
+OffsetX: 0
+OffsetY: 0
+HotspotX: 1
+HotspotY: 1
+HalfShift: true
+
+[38;2;0;0;0m[48;2;0;0;0m [48;2;255;0;255m▀[48;2;0;0;0m [0m
+[38;2;255;0;255m[48;2;0;0;0m▀[48;2;255;0;255m [48;2;0;0;0m▀[0m
+
+
+# Walk Tables (edited by spredit.py)
+WalkTable: N
+  0, 3
+
+WalkTable: S
+  1, 2
+
+WalkTable: W
+  0, 1
+
+WalkTable: E
+  1, 0
+
+WalkTable: WH
+  2, 3
+
+WalkTable: EH
+  3, 2
