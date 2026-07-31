@@ -43,7 +43,7 @@ Requires a standard C compiler (GCC or Clang) and the math library.
 
 ```bash
 # Compile with optimizations and warnings
-gcc blopogfon.c -o blopotron
+gcc blopotron.c -o blopotron
 
 # Run the game
 
