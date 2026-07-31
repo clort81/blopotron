@@ -13,7 +13,9 @@ Survive waves of enemies in your terminal. No tutorials, no cutscenes, no invent
 ## Features
 - **Pure Terminal Rendering**: Direct ANSI escape code and UTF-8 output.
 - **Half-Step Quantization**: Smooth sub-pixel entity movement rendered using 1/2-step UTF-8 block characters (`█`, `▌`, `▐`, `▄`, `▀`, `▗`, `▖`, `▝`, `▘`).
+- 
 ![halfstep-trick](half_row_spacing.png).
+
 - **Decal System**: 
   - *Floor Decals*: Grey/white pulsing `╳` marks left behind when a Hulk crushes a human.
   - *Overlay Decals*: Rainbow color-cycling score popups (e.g., "1000", "5000") that appear when humans are rescued.
