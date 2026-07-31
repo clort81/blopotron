@@ -27,52 +27,21 @@
  *  Same rule applies to:  player, quark, hulk, brain, spheroid,
  *  enforcer, human, laser, terror, electrode, cruise.
  *
- *  MULTI-DIRECTION FACING TAGS
- *  ---------------------------
- *  The "Facing:" field may list ONE OR MORE directions in any
- *  order, case-insensitive, with or without separators:
- *
- *      Facing: N        -> N only
- *      Facing: NS        -> both N and S  (frame index appears in
- *                                       walk_n[] AND walk_s[])
- *      Facing: SN        -> same as NS
- *      Facing: NSEW      -> all four
- *      Facing: N S       -> N+S (spaces ok)
- *
- *  Internally each Frame carries a 4-bit mask (FACE_N_BIT etc.).
- *  The auto-grouper ORs tagged frames into every named facing's
- *  walk-cycle table, in source order.  Facings with no tagged
- *  frames fall back to ALL frames in source order (legacy
- *  default); frames with no Facing: tag at all are skipped by
- *  the auto-grouper and are reachable only via that fallback.
- *
  *  MERGE BEHAVIOUR
  *  ---------------
- *  If <existing_sprites.h> exists, the tool parses it for
- *  previously-generated sprite blocks (delimited by  slash-star
- *  === <name> === star-slash  markers) and retains them.  New
- *  sprites from <input.ans> are added; if a name clashes with
- *  an existing block, the NEW data overwrites the old block.
- *  Non-clashing existing blocks are preserved verbatim -- this
- *  is how you hand-edit one sprite (e.g. Grunt's step_period=0
- *  positional tweak) and then add another sprite (e.g. Hulk)
- *  without losing your edits.
+ *  If <existing_sprites.h> exists (default: "sprites.h" in CWD),
+ *  the tool parses it for previously-generated sprite blocks
+ *  (delimited by  slash-star === <name> === star-slash  markers)
+ *  and retains them.  New sprites from <input.ans> are added; if
+ *  a name clashes with an existing block, the NEW data overwrites
+ *  the old block.  Non-clashing existing blocks are preserved
+ *  verbatim.
  *
  *  USAGE
  *  -----
- *  Two forms, auto-detected by whether argv[1] ends in ".ans":
- *
- *      # Legacy single-input form (argv[1] is .ans):
  *      build_sprites7 <input.ans> <output.h> [existing_sprites.h]
  *
- *      # Multi-input form (argv[1] is the output path):
- *      build_sprites7 <output.h> <in1.ans> [in2.ans ...]
- *
- *  In multi-input form, the existing-sprites.h path defaults to
- *  the OUTPUT path itself, so re-running
- *      build_sprites7 sprites.h ENT_HULK.ans
- *  merges with the sprites.h already on disk (preserving any
- *  hand-edited blocks that don't appear in the new .ans inputs).
+ *  If the third argument is omitted, defaults to "sprites.h".
  *
  *  BUILD
  *  -----
@@ -106,9 +75,26 @@
 #define MAX_EXISTING_BLOCK  (256 * 1024)
 
 /* ---------- Entity-type table ----------
- * Order matches the EntityType enum in btg.c:
+ * Order follows the canonical game ordering:
  *   Player, Grunt, Quark, Hulk, Brain, Spheroid, Enforcer,
- *   Human, Laser, Terror, Electrode, Cruise
+ *   Human, Mommy, Daddy, Mikey, Laser, Terror, Electrode,
+ *   Cruise, Tank
+ *
+ * HUMAN SUB-VARIANTS (Mommy, Daddy, Mikey):
+ *   These three are "themes" on the single ENT_HUMAN entity type.
+ *   The game uses Entity.human_type (0/1/2) to pick which
+ *   sub-variant's SpriteSet to bind at spawn time.  Each sub-variant
+ *   has its own .ans file (e.g. ENT_HUMAN_Daddy.ans) and its own
+ *   SpriteSet symbol (sprite_mommy_set, sprite_daddy_set,
+ *   sprite_mikey_set).
+ *
+ *   The legacy "human" entry is retained for backward compatibility
+ *   -- if a user generates only ENT_HUMAN.ans, the build still
+ *   succeeds and produces sprite_human_set.  The game no longer
+ *   consults sprite_human_set at runtime (it always picks one of the
+ *   three sub-variants), but the symbol exists so older references
+ *   don't break the link.
+ *
  * The cident field is the lowercase C-identifier prefix used
  * in symbol names (e.g.  sprite_grunt_set, grunt_f0_r0).
  * The display field is the human-readable name put in the
@@ -124,7 +110,7 @@ typedef struct {
 } EntityMap;
 
 static const EntityMap ENTITY_MAP[] = {
-    { "player",    "player",    "Player",    6 },
+    { "player",    "player",    "Player",    1 },
     { "grunt",     "grunt",     "Grunt",     8 },
     { "quark",     "quark",     "Quark",     4 },
     { "hulk",      "hulk",      "Hulk",      4 },
@@ -132,12 +118,41 @@ static const EntityMap ENTITY_MAP[] = {
     { "spheroid",  "spheroid",  "Spheroid",  2 },
     { "enforcer",  "enforcer",  "Enforcer",  2 },
     { "human",     "human",     "Human",     4 },
+    { "mommy",     "mommy",     "Mommy",     4 },
+    { "daddy",     "daddy",     "Daddy",     4 },
+    { "mikey",     "mikey",     "Mikey",     4 },
     { "laser",     "laser",     "Laser",     1 },
     { "terror",    "terror",    "Terror",    1 },
     { "electrode", "electrode", "Electrode", 1 },
     { "cruise",    "cruise",    "Cruise",    1 },
+    { "tank",      "tank",      "Tank",      4 },
 };
 #define NUM_ENTITY_MAP  (int)(sizeof(ENTITY_MAP) / sizeof(ENTITY_MAP[0]))
+
+/* Facing codes (must be before Sprite struct which uses NUM_FACE_SLOTS).
+ * Array index constants (0-3) match Direction enum: N=0,S=1,W=2,E=3.
+ * Bitmask constants for multi-direction Facing: tags in .ans files.
+ *   NOTE: W and E are swapped in array index vs. compass order to match
+ *   DIR_LEFT=2 (W), DIR_RIGHT=3 (E) in the game's Direction enum. */
+#define FACE_N_IDX 0
+#define FACE_S_IDX 1
+#define FACE_W_IDX 2
+#define FACE_E_IDX 3
+#define FACE_WH_IDX 4
+#define FACE_EH_IDX 5
+#define NUM_FACE_SLOTS 6
+
+#define FACE_NONE 0
+#define FACE_N_BIT 1   /* bit 0 */
+#define FACE_S_BIT 2   /* bit 1 */
+#define FACE_W_BIT 4   /* bit 2 */
+#define FACE_E_BIT 8   /* bit 3 */
+#define FACE_WH_BIT 16  /* bit 4 -- W at odd row */
+#define FACE_EH_BIT 32  /* bit 5 -- E at odd row */
+
+static const int FACE_BIT[NUM_FACE_SLOTS] = { FACE_N_BIT, FACE_S_BIT, FACE_W_BIT, FACE_E_BIT, FACE_WH_BIT, FACE_EH_BIT };
+static const char* FACE_SUFFIX[NUM_FACE_SLOTS] = { "n", "s", "w", "e", "wh", "eh" };
+static const char* FACE_NAME[NUM_FACE_SLOTS]   = { "N", "S", "W", "E", "WH", "EH" };
 
 /* ---------- Parsed sprite data ---------- */
 typedef struct {
@@ -152,65 +167,50 @@ typedef struct {
     int  ox, oy;        /* offset (from OffsetX/Y)                */
     int  hx, hy;        /* hotspot  (from HotspotX/Y)             */
     int  frame_no;      /* informational FrameNo: field           */
-    int  facing;        /* 4-bit mask: FACE_N_BIT|FACE_S_BIT|...  */
-                       /* or FACE_NONE if untagged               */
+    int  facing;        /* bitmask: FACE_N=1, FACE_S=2, FACE_E=4, FACE_W=8 */
 } Frame;
+
 
 typedef struct {
     const EntityMap* map;
     Frame  frames[MAX_FRAMES];
     int    frame_count;
+    /* Walk tables: one per facing direction, parsed from WalkTable: sections.
+     * If a direction has no WalkTable: in the .ans source, walk_count[d] stays 0.
+     * After all .ans files are parsed, empty WH is filled from W, empty EH from E. */
+    int    walk_table[NUM_FACE_SLOTS][MAX_FRAMES];
+    int    walk_count[NUM_FACE_SLOTS];
 } Sprite;
 
 static Sprite g_sprites[MAX_SPRITES];
 static int    g_sprite_count = 0;
 
-/* Facing codes -- each Frame carries a 4-bit facing MASK.  The bit
- * order matches the Direction enum order in btg.c (N=0,S=1,E=2,W=3)
- * so the auto-grouper can index group[0..3] by face index.
- *
- * A frame tagged "Facing: NS" gets (FACE_N_BIT | FACE_S_BIT) and
- * contributes its index to BOTH walk_n[] and walk_s[].  FACE_NONE
- * (0) means "no Facing: tag" -- the auto-grouper skips such frames;
- * they're reachable only via the "no tagged frames for this facing"
- * fallback that lists all frames in source order.
- */
-#define FACE_N_BIT (1 << 0)
-#define FACE_S_BIT (1 << 1)
-#define FACE_E_BIT (1 << 2)
-#define FACE_W_BIT (1 << 3)
-#define FACE_NONE   0
-#define FACE_ALL    (FACE_N_BIT | FACE_S_BIT | FACE_E_BIT | FACE_W_BIT)
-
-/* Face index (0..3) -> bitmask.  Mirrors FACE_SUFFIX/FACE_NAME order. */
-static const int FACE_BIT[4] = { FACE_N_BIT, FACE_S_BIT, FACE_E_BIT, FACE_W_BIT };
-
-static const char* FACE_SUFFIX[4] = { "n", "s", "e", "w" };
-static const char* FACE_NAME[4]   = { "N", "S", "E", "W" };
-
-/* Parse a Facing: field value and return a 4-bit mask.
- *
- * Walks the WHOLE string (not just the first character) so multi-
- * direction tags like "NS", "SN", "NSEW", "N S", or "N/S" all work.
- * Any character that isn't N/S/E/W (case-insensitive) is silently
- * skipped -- that way separators (spaces, commas, slashes, pipes)
- * are tolerated without special handling.
- *
- * Returns FACE_NONE (0) if the string contains no N/S/E/W letters
- * at all, which the auto-grouper treats as "untagged".
- */
-static int parse_facing_list(const char* s) {
+/* Parse a Facing: field value ('N'/'S'/'E'/'W', case-insensitive) ->
+ * FACE_N/S/E/W; anything else returns FACE_NONE. */
+static int parse_facing_token(const char* s) {
+    /* Parse facing string into bitmask.
+     * Supports compound multi-char tokens: "WHEH" = WH+EH, "NSWE" = N+S+W+E.
+     * Also single tokens: "EH", "WH", or single-char "N","S","E","W".
+     *
+     * Strategy: greedy scan -- consume "WH" or "EH" when the next two chars
+     * match, otherwise consume one char at a time ('N','S','E','W').
+     * Unknown chars are silently skipped.
+     */
     int mask = FACE_NONE;
     while (*s) {
-        char c = (char)toupper((unsigned char)*s);
-        switch (c) {
-            case 'N': mask |= FACE_N_BIT; break;
-            case 'S': mask |= FACE_S_BIT; break;
-            case 'E': mask |= FACE_E_BIT; break;
-            case 'W': mask |= FACE_W_BIT; break;
-            default: break;  /* skip spaces, commas, slashes, etc. */
+        char c0 = (char)toupper((unsigned char)s[0]);
+        char c1 = (char)toupper((unsigned char)s[1]);
+        if (c0 == 'W' && c1 == 'H') { mask |= FACE_WH_BIT; s += 2; }
+        else if (c0 == 'E' && c1 == 'H') { mask |= FACE_EH_BIT; s += 2; }
+        else {
+            switch (c0) {
+                case 'N': mask |= FACE_N_BIT; break;
+                case 'S': mask |= FACE_S_BIT; break;
+                case 'E': mask |= FACE_E_BIT; break;
+                case 'W': mask |= FACE_W_BIT; break;
+            }
+            s++;
         }
-        s++;
     }
     return mask;
 }
@@ -408,8 +408,12 @@ static void parse_ans(const char* filename)
 
     char     line[MAX_LINE];
     Sprite*  cur_sprite = NULL;
+    Sprite*  last_sprite = NULL;  /* most recent sprite for WalkTable parsing */
     Frame*   cur_frame  = NULL;
     bool     in_data    = false;
+
+    /* Walk table parsing state */
+    int      wt_dir_idx = -1;   /* index into FACE_NAME[], or -1 */
 
     /* Deferred frame metadata (collected between Index: and Character:) */
     int  pending_ox = 0, pending_oy = 0;
@@ -467,6 +471,7 @@ static void parse_ans(const char* filename)
                 cur_sprite = &g_sprites[g_sprite_count++];
                 cur_sprite->map = m;
                 cur_sprite->frame_count = 0;
+                memset(cur_sprite->walk_count, 0, sizeof(cur_sprite->walk_count));
             }
 
             /* Allocate a new frame on this sprite */
@@ -478,6 +483,7 @@ static void parse_ans(const char* filename)
                 continue;
             }
             cur_frame = &cur_sprite->frames[cur_sprite->frame_count++];
+            last_sprite = cur_sprite;
             memset(cur_frame, 0, sizeof(Frame));
             cur_frame->facing = FACE_NONE;  /* default: no facing tag */
             if (have_pending) {
@@ -490,6 +496,47 @@ static void parse_ans(const char* filename)
             }
             in_data = false;
             have_pending = false;
+        }
+        /* --- Walk table parsing (appears after all frame blocks) ---
+         * MUST come before the cur_frame check: once "Character:" sets
+         * cur_frame it is never cleared, so WalkTable: lines would be
+         * swallowed by the cur_frame branch.  Seeing a WalkTable: line
+         * also signals end-of-frames for the current sprite. */
+        else if (strncmp(line, "WalkTable:", 10) == 0 && last_sprite) {
+            cur_frame = NULL;   /* frame data is finished */
+            /* Parse direction name after "WalkTable: " */
+            const char* dir = line + 10;
+            while (*dir == ' ') dir++;
+            wt_dir_idx = -1;
+            for (int d = 0; d < NUM_FACE_SLOTS; d++) {
+                if (strcasecmp(dir, FACE_NAME[d]) == 0) {
+                    wt_dir_idx = d;
+                    break;
+                }
+            }
+            if (wt_dir_idx >= 0) {
+                /* Reset this direction's walk table (new data overwrites) */
+                last_sprite->walk_count[wt_dir_idx] = 0;
+            }
+        }
+        else if (wt_dir_idx >= 0 && last_sprite && line[0] != '\0') {
+            /* Parse comma-separated frame indices for current walk direction */
+            const char* p = line;
+            while (*p) {
+                while (*p == ' ' || *p == '\t') p++;
+                if (*p == '\0' || *p == ',' || *p == '#') break;
+                int val = 0;
+                if (sscanf(p, "%d", &val) == 1) {
+                    int cnt = last_sprite->walk_count[wt_dir_idx];
+                    if (cnt < MAX_FRAMES) {
+                        last_sprite->walk_table[wt_dir_idx][cnt] = val;
+                        last_sprite->walk_count[wt_dir_idx] = cnt + 1;
+                    }
+                }
+                while (*p && *p != ',') p++;
+                if (*p == ',') p++;
+            }
+            wt_dir_idx = -1;  /* only one data line per WalkTable: */
         }
         else if (cur_frame) {
             if (strncmp(line, "OffsetX:", 8) == 0)
@@ -504,7 +551,7 @@ static void parse_ans(const char* filename)
                 sscanf(line, "FrameNo: %d", &cur_frame->frame_no);
             else if (strncmp(line, "Facing:", 7) == 0) {
                 const char* val = line + 7;
-                cur_frame->facing = parse_facing_list(val);
+                cur_frame->facing = parse_facing_token(val);
             }
             else if (line[0] == '\0') {
                 /* Blank line transitions from header to data */
@@ -539,11 +586,51 @@ static void parse_ans(const char* filename)
                 sscanf(line, "FrameNo: %d", &pending_fno);
             else if (strncmp(line, "Facing:", 7) == 0) {
                 const char* val = line + 7;
-                pending_facing = parse_facing_list(val);
+                pending_facing = parse_facing_token(val);
             }
+        }
+        else if (line[0] == '\0' || line[0] == '#') {
+            wt_dir_idx = -1;  /* blank line or comment ends walk table parsing */
         }
     }
     fclose(f);
+    for (int s = 0; s < g_sprite_count; s++) {
+        Sprite* sp = &g_sprites[s];
+
+        /* Detect which facings are present and whether they are
+         * all-zeroed for FrameNo. */
+        int face_first[MAX_FRAMES];   /* index of first frame per facing */
+        int face_last[MAX_FRAMES];    /* index of last  frame per facing */
+        int face_all_zero[4] = {1, 1, 1, 1};
+        int face_has_any[4]  = {0, 0, 0, 0};
+
+        memset(face_first, -1, sizeof(face_first));
+        memset(face_last, -1, sizeof(face_last));
+
+        for (int i = 0; i < sp->frame_count; i++) {
+            int fc = sp->frames[i].facing;
+            if (fc >= 0 && fc < 4) {
+                if (!face_has_any[fc]) face_first[fc] = i;
+                face_last[fc] = i;
+                face_has_any[fc] = 1;
+                if (sp->frames[i].frame_no != 0)
+                    face_all_zero[fc] = 0;
+            }
+        }
+
+        /* For each facing that is all-zeroed, renumber sequentially.
+         * NOTE: face_has_any/face_all_zero have 4 entries (basic N/S/E/W),
+         * so limit this loop to 4. */
+        for (int f = 0; f < 4; f++) {
+            if (!face_has_any[f] || !face_all_zero[f]) continue;
+            for (int i = face_first[f]; i <= face_last[f]; i++) {
+                if (sp->frames[i].facing & FACE_BIT[f]) {
+                    sp->frames[i].frame_no =
+                        i - face_first[f];
+                }
+            }
+        }
+    }
 }
 
 /* ============================================================
@@ -658,81 +745,13 @@ static void parse_existing_sprites_h(const char* filename)
 /* ============================================================
  *  Emit one sprite block (new data) to the output file
  * ============================================================
- *  Layout per sprite (using "grunt" as an example).  Each block
- *  produces:
+ *  Walk tables are read directly from WalkTable: sections in the
+ *  .ans source.  No auto-derivation, auto-split, or fallback logic.
  *
- *    [marker comment:  === grunt === ]
- *    static const uint8_t grunt_f0_r0[40] = { ... };
- *    static const uint8_t grunt_f0_r1[40] = { ... };
- *    static const uint8_t* const grunt_f0_rows[] = {
- *        grunt_f0_r0, grunt_f0_r1
- *    };
- *    static const SpriteFrame grunt_f0 = {
- *        grunt_f0_rows, 4, 2, 2, 1     // rows, w, h, ox+hx, oy+hy
- *    };
- *    ... (per frame) ...
- *    static const SpriteFrame grunt_frames[] = {
- *        grunt_f0, grunt_f1, grunt_f2, grunt_f3
- *    };
- *
- *    // --- Hand-editable walk-cycle tables ---
- *    // Edit these int arrays freely to reorder, reuse, or
- *    // build ping-pong cycles.  Each entry is an index into
- *    // grunt_frames[].  To make a cycle longer or shorter, just
- *    // change the array contents -- no need to touch row data.
- *    static const int grunt_walk_n[] = { 0, 1 };
- *    static const int grunt_walk_s[] = { 2, 3 };
- *    static const int grunt_walk_e[] = { 0, 1 };   // = N fallback
- *    static const int grunt_walk_w[] = { 2, 3 };   // = S fallback
- *
- *    static const SpriteSet sprite_grunt_set = {
- *        "Grunt", 4, grunt_frames,
- *        { { grunt_walk_n, 2, 8, 0, 0, 1, 1 },
- *          { grunt_walk_s, 2, 8, 0, 0, 1, 1 },
- *          { grunt_walk_e, 2, 8, 0, 0, 1, 1 },
- *          { grunt_walk_w, 2, 8, 0, 0, 1, 1 } }
- *    };
- *
- *  The 7-tuple inside each FacingInfo is:
- *      { frame_indices_ptr, count, step_period,
- *        offset_x, offset_y, scale_x, scale_y }
- *
- *  scale_x / scale_y are per-axis stride multipliers consumed by
- *  btk.c's entity_select_frame() with INVERTED semantics:
- *      frame = ((cells * scale) / step_period) % count
- *      -- scale_x applies to E/W facings, scale_y to N/S
- *      -- bigger scale = FASTER animation (more frame advances
- *         per unit of travel)
- *      -- scale=1 reproduces legacy `cells / step_period` exactly
- *      -- scale > step_period yields sub-cell strides (e.g.
- *         step_period=4, scale=8 -> one frame per half-cell)
- *  Defaults emitted here are 1,1 (legacy behaviour, no scaling).
- *  Hand-tune in sprites.h, or live via the `btk -e` walk-table
- *  editor which writes the new values back into the FacingInfo
- *  initializer.  Per-facing granularity means N/S can use a
- *  different scale from E/W on the same entity.
- *
- *  AUTO-GROUPING RULE
- *  ------------------
- *  Each frame's "Facing:" tag may list ONE OR MORE directions
- *  (e.g. "N", "NS", "NSEW").  The builder ORs them into a 4-bit
- *  mask and adds the frame's index to EVERY named facing's
- *  walk_<x>[] array, in source order.
- *
- *    - A frame tagged "Facing: NS" contributes its index to
- *      BOTH walk_n[] and walk_s[].
- *    - Facings with NO tagged frames fall back to ALL frames
- *      in source order (legacy default).
- *    - Frames with NO Facing: tag at all are skipped by the
- *      auto-grouper -- they're reachable only via the fallback.
- *    - If NO frames have any facing tags, all 4 facings share
- *      ALL frames (this is what you get from ENT_GRUNT.ans, which
- *      has no Facing: tags at all -- the Grunt's hand-edited N/S
- *      split is then applied by hand in sprites.h afterwards).
- *
- *  Either way, you can hand-edit the walk_<x>[] arrays afterwards
- *  to assign frames however you like -- the builder's defaults
- *  are just a starting point.
+ *  If WH or EH walk tables are empty in the .ans, they are
+ *  pre-filled with W or E respectively (see post-parse step in
+ *  main).  This means the game renders the same sprite for even
+ *  and odd rows when the entity faces W or E.
  */
 static void emit_sprite_block(FILE* fout, const Sprite* sp)
 {
@@ -786,80 +805,36 @@ static void emit_sprite_block(FILE* fout, const Sprite* sp)
                 name, fi, r, (r < h - 1) ? "," : "");
         }
         fprintf(fout, "\n};\n");
-
-        /* SpriteFrame: rows, w, h, ox (combined with hx), oy (with hy). */
-        int ox_total = fr->ox + fr->hx;
-        int oy_total = fr->oy + fr->hy;
-        fprintf(fout,
-            "static const SpriteFrame %s_f%d = { "
-            "%s_f%d_rows, %d, %d, %d, %d };\n",
-            name, fi, name, fi, w, h, ox_total, oy_total);
     }
 
     /* --- 2. Flat frames[] array (all frames, in source order) --- */
-    fprintf(fout, "static const SpriteFrame %s_frames[] = {\n", name);
+    fprintf(fout, "static SpriteFrame %s_frames[] = {\n", name);
     for (int fi = 0; fi < N; fi++) {
-        fprintf(fout, "    %s_f%d%s\n",
-            name, fi, (fi < N - 1) ? "," : "");
+        const Frame* fr = &sp->frames[fi];
+        int w = fr->w;
+        int h = fr->h;
+        int ox_total = fr->ox + fr->hx;
+        int oy_total = fr->oy + fr->hy;
+        if (w <= 0 || h <= 0) {
+            fprintf(fout, "    { NULL, 0, 0, 0, 0 }%s\n",
+                (fi < N - 1) ? "," : "");
+        } else {
+            fprintf(fout, "    { %s_f%d_rows, %d, %d, %d, %d }%s\n",
+                name, fi, w, h, ox_total, oy_total,
+                (fi < N - 1) ? "," : "");
+        }
     }
     fprintf(fout, "};\n\n");
 
-    /* --- 3. Group frames by facing (multi-direction mask) --- */
-    int group[4][MAX_FRAMES];
-    int group_count[4] = { 0, 0, 0, 0 };
-    int any_tagged = 0;
-    for (int fi = 0; fi < N; fi++) {
-        int mask = sp->frames[fi].facing;
-        if (mask == FACE_NONE) continue;  /* untagged: fallback-only */
-        any_tagged = 1;
-        for (int f = 0; f < 4; f++) {
-            if (mask & FACE_BIT[f]) {
-                if (group_count[f] < MAX_FRAMES)
-                    group[f][group_count[f]++] = fi;
-            }
-        }
-    }
-
-    /* --- 4. Emit per-facing walk-cycle tables --- */
-    fprintf(fout, "/* --- %s walk-cycle tables (HAND-EDITABLE) ---\n", disp);
+    /* --- 3. Emit per-facing walk-cycle tables --- */
+    fprintf(fout, "/* --- %s walk-cycle tables ---\n", disp);
     fprintf(fout, " * Each entry is an index into %s_frames[].\n", name);
-    fprintf(fout, " * Edit freely to reorder, reuse, or build ping-pong cycles.\n");
-    if (any_tagged) {
-        fprintf(fout, " * Auto-grouped from multi-direction 'Facing:' tags in source\n");
-        fprintf(fout, " * .ans -- a frame tagged \"NS\" contributes its index to BOTH\n");
-        fprintf(fout, " * walk_n[] and walk_s[].  Facings with no tagged frames fall\n");
-        fprintf(fout, " * back to all %d frames in source order.\n", N);
-    } else {
-        fprintf(fout, " * No 'Facing:' tags in source .ans -- all 4 facings\n");
-        fprintf(fout, " * default to ALL %d frames.  Reassign by editing the\n", N);
-        fprintf(fout, " * numeric literals below.\n");
-    }
+    fprintf(fout, " * Read from WalkTable: directives in the .ans source.\n");
     fprintf(fout, " */\n");
 
-    /* Default index sequence: 0..N-1 (used when no facing tags, or
-     * when a facing has no tagged frames). */
-    int all_indices[MAX_FRAMES];
-    for (int i = 0; i < N && i < MAX_FRAMES; i++) all_indices[i] = i;
-
-    for (int f = 0; f < 4; f++) {
-        const int* indices;
-        int        count;
-        bool       from_tags;
-        if (any_tagged && group_count[f] > 0) {
-            indices   = group[f];
-            count     = group_count[f];
-            from_tags = true;
-        } else {
-            /* Either no tags at all, or this facing has no tagged
-             * frames -- fall back to "all frames in source order". */
-            indices   = all_indices;
-            count     = N;
-            from_tags = false;
-        }
-        fprintf(fout, "/* %s: %d frame%s%s */\n",
-            FACE_NAME[f], count,
-            (count == 1) ? "" : "s",
-            from_tags ? " (from Facing: tags)" : " (fallback: all frames)");
+    for (int f = 0; f < NUM_FACE_SLOTS; f++) {
+        int count = sp->walk_count[f];
+        const int* indices = sp->walk_table[f];
         fprintf(fout, "static const int %s_walk_%s[] = {",
             name, FACE_SUFFIX[f]);
         for (int i = 0; i < count; i++) {
@@ -869,36 +844,22 @@ static void emit_sprite_block(FILE* fout, const Sprite* sp)
         fprintf(fout, "\n};\n");
     }
 
-    /* --- 5. Emit SpriteSet with new FacingInfo format --- */
-    fprintf(fout, "\nstatic const SpriteSet sprite_%s_set = {\n", name);
+    /* --- 4. Emit SpriteSet with FacingInfo --- */
+    fprintf(fout, "\nstatic SpriteSet sprite_%s_set = {\n", name);
     fprintf(fout, "    \"%s\", %d, %s_frames,\n", disp, N, name);
-    fprintf(fout, "    { /* N, S, E, W -- {indices, count, step, ox, oy, scale_x, scale_y} */\n");
-    for (int f = 0; f < 4; f++) {
-        int count;
-        if (any_tagged && group_count[f] > 0) count = group_count[f];
-        else                                   count = N;
-        /* scale_x / scale_y default to 1,1 -- hand-edit in sprites.h
-         * or tune live via `btk -e`; the editor writes back into
-         * these last two fields of the FacingInfo initializer. */
+    fprintf(fout, "    { /* N, S, W, E, WH, EH */\n");
+    for (int f = 0; f < NUM_FACE_SLOTS; f++) {
+        int count = sp->walk_count[f];
         fprintf(fout,
-            "        { %s_walk_%s, %d, %d, 0, 0, 1, 1 }%s /* %s */\n",
+            "        { %s_walk_%s, %d, %d, 0, 0, %d, %d }%s /* %s */\n",
             name, FACE_SUFFIX[f], count, step,
-            (f < 3) ? "," : "",
+            step,
+            step,
+            (f < NUM_FACE_SLOTS - 1) ? "," : "",
             FACE_NAME[f]);
     }
     fprintf(fout, "    }\n");
     fprintf(fout, "};\n\n");
-
-    /* --- 6. Emit guard macro so bti.c can skip its stub --- *
-     * Produces:  #define HAVE_SPRITE_GRUNT 1
-     * bti.c wraps each stub with  #ifndef HAVE_SPRITE_<NAME>
-     * so that including sprites.h suppresses only the stubs
-     * for entities that have real sprite data here. */
-    fprintf(fout, "#define HAVE_SPRITE_");
-    for (const char* p = name; *p; p++) {
-        fputc(toupper((unsigned char)*p), fout);
-    }
-    fprintf(fout, " 1\n\n");
 }
 
 /* ============================================================
@@ -988,193 +949,95 @@ static void emit_sprites_h(const char* outfile)
  * ============================================================ */
 int main(int argc, char** argv)
 {
-    /* Two CLI forms, auto-detected by whether argv[1] ends in .ans:
-     *
-     *   Legacy (single input):
-     *     build_sprites7 <input.ans> <output.h> [existing_sprites.h]
-     *
-     *   Multi-input:
-     *     build_sprites7 <output.h> <in1.ans> [in2.ans ...]
-     *
-     * In multi-input form, the existing-sprites.h path defaults to
-     * the OUTPUT path itself, so re-running
-     *     build_sprites7 sprites.h ENT_HULK.ans
-     * merges with the sprites.h already on disk (preserving any
-     * hand-edited blocks that don't appear in the new .ans inputs).
-     */
-    const char*  out_file   = NULL;
-    const char*  exist_file = NULL;
-    const char** ans_files  = NULL;
-    int          n_ans      = 0;
-    bool         legacy     = false;
+    const char* out_file  = NULL;
+    const char* exist_file = "sprites.h";
 
-    if (argc < 3) {
+    if (argc < 2) {
         fprintf(stderr,
-            "Usage:\n"
-            "  Legacy : %s <input.ans> <output.h> [existing_sprites.h]\n"
-            "  Multi  : %s <output.h>  <in1.ans> [in2.ans ...]\n"
+            "Usage: %s <output.h> <input1.ans> [input2.ans ...]\n"
             "\n"
-            "  Auto-detected by whether argv[1] ends in '.ans'.\n"
+            "  output.h       Generated sprites.h path.\n"
+            "  input*.ans     One or more ANSI text-art sprite sources.\n"
             "\n"
-            "  In multi-input form, existing_sprites.h defaults to the\n"
-            "  OUTPUT path itself, so re-running\n"
-            "      %s sprites.h ENT_HULK.ans\n"
-            "  merges with the sprites.h already on disk (preserving\n"
-            "  hand-edited blocks that aren't in the new .ans inputs).\n"
+            "  If 'sprites.h' exists in CWD, it is auto-loaded as\n"
+            "  the merge source (preserving blocks not overwritten by\n"
+            "  new .ans data).  If absent, a fresh sprites.h is built.\n"
             "\n"
-            "  Facing: tags may list multiple directions, e.g. 'NS'\n"
-            "  contributes the frame to BOTH walk_n[] and walk_s[].\n"
-            "\n"
-            "  Character names are matched case-insensitively and\n"
-            "  plural-awarely to the 12 entity types (player, grunt,\n"
-            "  quark, hulk, brain, spheroid, enforcer, human, laser,\n"
-            "  terror, electrode, cruise).\n",
-            argv[0], argv[0], argv[0]);
+            "Character names in .ans files are matched case-"
+            "insensitively and plural-awarely to the 12+ entity\n"
+            "types (player, grunt, quark, hulk, brain, spheroid,\n"
+            "enforcer, human/mommy/daddy/mikey, laser, terror,\n"
+            "electrode, cruise, tank).\n",
+            argv[0]);
         return 1;
     }
 
-    /* Auto-detect: if argv[1] ends in '.ans', it's the legacy form. */
-    {
-        size_t L = strlen(argv[1]);
-        if (L >= 4 && strcmp(argv[1] + L - 4, ".ans") == 0) legacy = true;
-    }
+    out_file = argv[1];
 
-    if (legacy) {
-        ans_files  = (const char**)malloc(sizeof(char*));
-        ans_files[0] = argv[1];
-        n_ans      = 1;
-        out_file   = argv[2];
-        exist_file = (argc >= 4) ? argv[3] : "sprites.h";
-    } else {
-        out_file   = argv[1];
-        exist_file = out_file;  /* merge from output file itself */
-        n_ans      = argc - 2;
-        ans_files  = (const char**)malloc(sizeof(char*) * (size_t)n_ans);
-        for (int i = 0; i < n_ans; i++) ans_files[i] = argv[2 + i];
-    }
-
-    /* ---- SAFETY CHECK: refuse .ans as output destination ----
-     * The output file must be a C header (.h, .hpp, .hh, or .hxx).
-     * Rejecting other extensions here prevents the footgun of
-     * running
-     *     build_sprites7 ENT_GRUNT.ans ENT_HULK.ans sprites.h
-     * (which the auto-detector interprets as "out=ENT_HULK.ans,
-     * inputs=[sprites.h]") and clobbering an .ans source file
-     * with generated C code.  We also reject .c, .o, and other
-     * non-header extensions for the same reason.
-     */
-    {
-        /* Find the last '.' in the basename (after last '/'). */
-        const char* base = strrchr(out_file, '/');
-        base = base ? base + 1 : out_file;
-        const char* dot  = strrchr(base, '.');
-        bool ok = false;
-        if (dot) {
-            /* Case-insensitive compare against allowed extensions. */
-            static const char* const ALLOWED[] = { ".h", ".hpp", ".hh", ".hxx", NULL };
-            for (int i = 0; ALLOWED[i]; i++) {
-                size_t n = strlen(ALLOWED[i]);
-                if (strncasecmp(dot, ALLOWED[i], n) == 0 && dot[n] == '\0') {
-                    ok = true;
-                    break;
-                }
-            }
-        }
-        if (!ok) {
-            fprintf(stderr,
-                "Error: output path '%s' does not look like a C header.\n"
-                "  The destination must end in .h (or .hpp/.hh/.hxx).\n"
-                "  This safety check prevents accidental overwrite of\n"
-                "  .ans source files or other non-header artifacts.\n"
-                "\n"
-                "  Correct usage:\n"
-                "    %s <output.h>  <in1.ans> [in2.ans ...]\n"
-                "  Legacy single-input:\n"
-                "    %s <input.ans> <output.h> [existing_sprites.h]\n",
-                out_file, argv[0], argv[0]);
-            free(ans_files);
-            return 1;
-        }
-    }
-
-    /* ---- SAFETY CHECK: prompt before overwriting existing .h ----
-     * If the output file already exists (and isn't the same path we
-     * just loaded as the existing-sprites.h merge source -- in that
-     * case the merge IS the overwrite, and we've already announced
-     * "Loaded N existing block(s)" above so the user knows), ask
-     * for explicit confirmation.  Pipe 'y' through stdin to bypass
-     * in scripts:   echo y | build_sprites7 sprites.h ENT_HULK.ans
-     * or set the env var  BTSPRITES_FORCE=1  to skip the prompt.
-     */
-    {
-        FILE* probe = fopen(out_file, "r");
+    /* Step 1: load existing sprites.h if present (for merge).
+     * We probe the output file first (if it already exists), then
+     * fall back to "sprites.h" in CWD.  Both are silent on miss. */
+    const char* merge_candidates[2] = { out_file, "sprites.h" };
+    for (int mc = 0; mc < 2; mc++) {
+        FILE* probe = fopen(merge_candidates[mc], "r");
         if (probe) {
             fclose(probe);
-            const char* force = getenv("BTSPRITES_FORCE");
-            if (force && force[0] == '1' && force[1] == '\0') {
-                /* -F bypass: silent */
-            } else {
+            exist_file = merge_candidates[mc];
+            parse_existing_sprites_h(exist_file);
+            if (g_existing_count > 0) {
                 fprintf(stderr,
-                    "Warning: output file '%s' already exists.\n"
-                    "  Existing blocks will be merged; clashing blocks\n"
-                    "  will be overwritten with new data from .ans.\n"
-                    "  Continue? [y/N] ",
-                    out_file);
-                fflush(stderr);
-                char buf[16];
-                if (!fgets(buf, sizeof(buf), stdin)) {
-                    fprintf(stderr, "  (no input) -- aborting.\n");
-                    free(ans_files);
-                    return 1;
-                }
-                if (buf[0] != 'y' && buf[0] != 'Y') {
-                    fprintf(stderr, "  Aborted.  No files changed.\n");
-                    free(ans_files);
-                    return 1;
-                }
+                    "Loaded %d existing sprite block(s) from '%s'.\n",
+                    g_existing_count, exist_file);
             }
+            break;
         }
     }
 
-    /* Step 1: load existing sprites.h if present (for merge) */
-    parse_existing_sprites_h(exist_file);
-    if (g_existing_count > 0) {
-        fprintf(stderr, "Loaded %d existing sprite block(s) from '%s'.\n",
-            g_existing_count, exist_file);
-    }
-
-    /* Step 2: parse each input .ans, accumulating into g_sprites[] */
-    for (int i = 0; i < n_ans; i++) {
-        parse_ans(ans_files[i]);
+    /* Step 2: parse each .ans input (argv[2..]) */
+    int total_input = 0;
+    for (int i = 2; i < argc; i++) {
+        parse_ans(argv[i]);
+        total_input++;
     }
     if (g_sprite_count == 0) {
-        fprintf(stderr, "Error: no sprites parsed from input(s).\n");
+        fprintf(stderr, "Error: no sprites parsed from %d input file(s).\n",
+            total_input);
         return 1;
     }
 
-    fprintf(stderr, "Parsed %d sprite(s) from %d .ans file(s):\n",
-        g_sprite_count, n_ans);
-    for (int i = 0; i < g_sprite_count; i++) {
-        fprintf(stderr, "  - %-10s : %d frame(s), dims ",
-            g_sprites[i].map->display, g_sprites[i].frame_count);
-        for (int j = 0; j < g_sprites[i].frame_count; j++) {
-            fprintf(stderr, "%s%dx%d",
-                j ? "/" : "",
-                g_sprites[i].frames[j].w,
-                g_sprites[i].frames[j].h);
+    /* Step 2.5: diagnose walk tables */
+    for (int s = 0; s < g_sprite_count; s++) {
+        Sprite* sp = &g_sprites[s];
+        fprintf(stderr, "  %s walk:\n", sp->map->display);
+        for (int d = 0; d < NUM_FACE_SLOTS; d++) {
+            fprintf(stderr, "    %s: count=%d", FACE_NAME[d],
+                        sp->walk_count[d]);
         }
-        /* Tally tagged facings for a quick sanity readout. */
-        int tagged = 0;
-        for (int j = 0; j < g_sprites[i].frame_count; j++)
-            if (g_sprites[i].frames[j].facing != FACE_NONE) tagged++;
-        fprintf(stderr, "  (%d tagged, %d untagged)\n",
-            tagged, g_sprites[i].frame_count - tagged);
+    }
+    /* Step 3: If WH/EH walk tables are missing, fill from W/E.
+     * Empty WH/EH means the .ans did not define them, so
+     * the entity does not distinguish even/odd rows when facing
+     * W or E.  We copy W→WH and E→EH so the game always has
+     * a valid walk table for all 6 directions. */
+    for (int s = 0; s < g_sprite_count; s++) {
+        Sprite* sp = &g_sprites[s];
+        if (sp->walk_count[FACE_WH_IDX] == 0 && sp->walk_count[FACE_W_IDX] > 0) {
+            memcpy(sp->walk_table[FACE_WH_IDX],
+                   sp->walk_table[FACE_W_IDX],
+                   sp->walk_count[FACE_W_IDX] * sizeof(int));
+            sp->walk_count[FACE_WH_IDX] = sp->walk_count[FACE_W_IDX];
+        }
+        if (sp->walk_count[FACE_EH_IDX] == 0 && sp->walk_count[FACE_E_IDX] > 0) {
+            memcpy(sp->walk_table[FACE_EH_IDX],
+                   sp->walk_table[FACE_E_IDX],
+                   sp->walk_count[FACE_E_IDX] * sizeof(int));
+            sp->walk_count[FACE_EH_IDX] = sp->walk_count[FACE_E_IDX];
+        }
     }
 
-    /* Step 3: emit the merged sprites.h */
+    /* Step 4: emit the merged sprites.h */
     emit_sprites_h(out_file);
     fprintf(stderr, "Wrote '%s'.\n", out_file);
 
-    free(ans_files);
     return 0;
 }
