@@ -1,10 +1,10 @@
 /*
 // ============================================================
-//  Blopotron 2024 terminal robotron-like game: ver. 0.76 (btp)
+//  Blopotron 2024 terminal robotron-like game: ver. 0.98 (btx)
 //  Pure Terminal Mode - No SDL Dependencies
 //
 //  Building:
-//  gcc btp.c -o btp        (no -lm needed -- see "math.h removal" below)
+//  gcc btx.c -o btx -lm
 // ============================================================
 //
 //  REVISION HISTORY (brief)
@@ -13,47 +13,19 @@
 //              frame selection for the Grunt, stride-cycle frame
 //              selection for the Hulk, multi-direction Facing: tags
 //              in build_sprites7.c.
-//  btk       : adds per-entity RENDER HOOK scaffold in render_all().
-//              Table-driven path remains the default for all entity
-//              types that fit the SpriteSet/FacingInfo model (Grunt,
-//              Hulk, Brain, Spheroid, etc.).  Entities that need
-//              custom rendering (Cruise missile with trailing body,
-//              Prog with morphing shapes, etc.) can plug in via a
-//              case in render_entity_custom() without disturbing
-//              the universal path.  No custom renderers implemented
-//              yet -- the hook is a no-op until those land.
-//  btn..bto  : half-row picker fix (one-shot division to avoid
-//              truncation dead zones), spheroid hybrid walk-cycle
-//              picker (positional bank + temporal sub-frame), editor
-//              ox/oy offset support, didactic commentary pass.
-//  btp       : ENT_LASER and ENT_TERROR now render via a new
-//              draw_shot_glyph() special-case function instead of
-//              the stub colored-rect fallback.  Each shot is drawn
-//              as a single Unicode QUADRANT glyph (▘ ▝ ▖ ▗) picked
-//              by sub-cell position, giving 2x2 sub-cell resolution
-//              for free with no sprite data and no font requirements.
-//              Yellow for player lasers, magenta for enforcer
-//              terrors.  Terror sprite data REMOVED from sprites.h
-//              (it was too large at 3x2 cells per frame); the stub
-//              sprite_terror_set in btp.c is retained only so
-//              spawn_entity()'s `e->anim = &sprite_terror_set` still
-//              compiles -- the stub is never actually drawn.
-//              Stretch goal (not implemented): fuse multiple
-//              same-type shots sharing a cell into multi-quadrant
-//              glyphs like ▚ ▞ ▀ ▄ ▌ ▐ █.
-//
-//              MATH.H REMOVAL: ai_spheroid() used to call sqrt()
-//              for velocity normalization, and 5 stub-fallback
-//              render paths used roundf(raw*2)/2 for half-cell
-//              quantization.  Both were the SOLE reasons the binary
-//              needed `-lm` at link time.  Replaced with two
-//              integer-only helpers defined near fixed_mul():
-//                - isqrt(int32_t n) -> int32_t   (16-iter bit shift)
-//                - quantize_half_cell(w, cells, denom) -> float
-//              The <math.h> include has been removed.  Verified
-//              bit-identical to libm across 2,066,829 test inputs.
+//  btk       : per-entity render hook scaffold in render_all().
+//  btn..bto  : half-row picker fix, spheroid hybrid walk-cycle,
+//              editor ox/oy offset support.
+//  btp       : draw_shot_glyph() for lasers/terrors (Unicode
+//              quadrant glyphs).  math.h removed.
+//  bts       : fixed electrode f0 rendering distortion.  Added
+//              interactive walk-table editor (btk -e) with save
+//              persistence.
+//  btx       : electrode variant per level via e->state at spawn
+//              (cycles 1-5).  Walk-table bypassed for static electrodes.
 // ============================================================
 */
+#define _DEFAULT_SOURCE  /* usleep() */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -65,6 +37,7 @@
 #include <locale.h>
 #include <termios.h>
 #include <sys/select.h>
+#include <stdarg.h>
 
 /* NOTE: <math.h> was removed in btp.c -- the codebase used to call sqrt()
  * (in ai_spheroid, for velocity normalization) and roundf() (in 5 stub-
@@ -92,6 +65,7 @@
 #define PLAYER_SPEED    64
 #define HULK_SPEED      64
 #define HUMAN_SPEED     32   /* 0.5x HULK_SPEED -- hulks catch up over ~2 screens of travel */
+#define TANK_SPEED       48   /* 0.75x HULK_SPEED -- tanks are heavy but purposeful */
 #define GRUNT_SPEED    200
 #define GRUNT_SHYNESS   50
 #define QUARK_SPEED    200
@@ -143,13 +117,24 @@
 //  STRUCT DEFINITIONS
 // ============================================================
 typedef enum {
-    DIR_UP = 0, DIR_DOWN = 1, DIR_LEFT = 2, DIR_RIGHT = 3, DIR_NONE = 4
+    DIR_UP = 0, DIR_DOWN = 1, DIR_LEFT = 2, DIR_RIGHT = 3,
+    DIR_LEFT_HALF = 4, DIR_RIGHT_HALF = 5,  /* W/odd-row, E/odd-row */
+    DIR_NONE = 6
 } Direction;
+
+/* Number of facing entries per SpriteSet.  The original 4 (N/S/W/E)
+ * are at indices 0-3 and match the Direction enum above.  Two extra
+ * slots (4 and 5) hold the "odd-row" W and E walk tables for entities
+ * whose art distinguishes even-row and odd-row (half-row-offset) poses.
+ * Entities that don't need the half-row variants leave those slots
+ * empty ({ stub_indices, 0, ... }) and the frame selector ignores
+ * them.  See README-sprites.md for which entity types use EH/WH. */
+#define NUM_FACINGS 6
 
 typedef enum {
     ENT_PLAYER = 0, ENT_GRUNT, ENT_QUARK, ENT_HULK, ENT_BRAIN,
     ENT_SPHEROID, ENT_ENFORCER, ENT_HUMAN, ENT_LASER, ENT_TERROR,
-    ENT_ELECTRODE, ENT_CRUISE, NUM_ENTITY_TYPES
+    ENT_ELECTRODE, ENT_CRUISE, ENT_TANK, NUM_ENTITY_TYPES
 } EntityType;
 
 typedef struct {
@@ -199,8 +184,8 @@ typedef struct {
 typedef struct {
     const char* name;
     int total_frames;
-    const SpriteFrame* frames;
-    FacingInfo facing[4];  /* N=0, S=1, E=2, W=3 -- matches Direction enum */
+    SpriteFrame* frames;
+    FacingInfo facing[NUM_FACINGS];  /* N=0, S=1, W=2, E=3, WH=4, EH=5 */
 } SpriteSet;
 
 // Pull in real sprite data when available.  sprites.h #defines
@@ -282,7 +267,7 @@ typedef struct {
 } Player;
 
 typedef struct {
-    int grunts, electrodes, hulks, brains, spheroids, quarks, mommies, daddies, mikeys;
+    int grunts, electrodes, hulks, brains, spheroids, quarks, mommies, daddies, mikeys, tanks;
 } LevelWave;
 
 typedef struct {
@@ -396,25 +381,25 @@ static const ChordEntry g_move_chord_table[] = {
 #define NUM_MOVE_CHORDS 4
 
 static const LevelWave g_waves[40] = {
-    { 5,  2,  0,  0, 0, 0, 1, 1, 0}, {17, 15,  5,  0, 1, 0, 1, 1, 1},
+    { 5,  2,  0,  0, 0, 0, 1, 1, 0, 0}, {17, 15,  5,  0, 1, 0, 1, 1, 1},
     {22, 25,  6,  0, 3, 0, 2, 2, 2}, {34, 25,  7,  0, 4, 0, 2, 2, 2},
     {20, 20,  0, 15, 1, 0,15, 0, 1}, {32, 25,  7,  0, 4, 0, 3, 3, 3},
-    { 0,  0, 12,  0, 0,10, 4, 4, 4}, {35, 25,  8,  0, 5, 0, 3, 3, 3},
+    { 0,  0, 12,  0, 0,10, 4, 4, 4, 0}, {35, 25,  8,  0, 5, 0, 3, 3, 3},
     {60,  0,  4,  0, 5, 0, 3, 3, 3}, {25, 20,  0, 20, 1, 0, 0,22, 0},
     {35, 25,  8,  0, 5, 0, 3, 3, 3}, { 0,  0, 13,  0, 0,12, 3, 3, 3},
     {35, 25,  8,  0, 5, 0, 3, 3, 3}, {27,  5, 20,  0, 2, 0, 5, 5, 5},
     {25, 20,  2, 20, 1, 0, 0, 0,22}, {35, 25,  3,  0, 5, 0, 3, 3, 3},
-    { 0,  0, 14,  0, 0,12, 3, 3, 3}, {35, 25,  8,  0, 5, 0, 3, 3, 3},
+    { 0,  0, 14,  0, 0,12, 3, 3, 3, 0}, {35, 25,  8,  0, 5, 0, 3, 3, 3},
     {70,  0,  3,  0, 5, 0, 3, 3, 3}, {25, 20,  2, 20, 2, 0, 8, 8, 8},
     {35, 25,  8,  0, 5, 0, 3, 3, 3}, { 0,  0, 15,  0, 0,12, 3, 3, 3},
     {35, 25,  8,  0, 5, 0, 3, 3, 3}, { 0,  0, 13,  0, 6, 7, 3, 3, 3},
     {25, 20,  1, 21, 1, 0,25, 0, 1}, {35, 25,  8,  0, 5, 0, 3, 3, 3},
-    { 0,  0, 16,  0, 0,12, 3, 3, 3}, {35, 25,  8,  0, 5, 1, 3, 3, 3},
+    { 0,  0, 16,  0, 0,12, 3, 3, 3, 0}, {35, 25,  8,  0, 5, 1, 3, 3, 3},
     {75,  0,  4,  0, 5, 1, 3, 3, 3}, {25, 20,  1, 22, 1, 1, 0,25, 0},
     {35, 25,  8,  0, 5, 1, 3, 3, 3}, { 0,  0, 16,  0, 0,13, 3, 3, 3},
     {35, 25,  8,  0, 5, 1, 3, 3, 3}, {30,  0, 25,  0, 2, 2, 3, 3, 3},
     {27, 15,  2, 23, 1, 2, 0, 0,25}, {35, 25,  8,  0, 5, 2, 3, 3, 3},
-    { 0,  0, 16,  0, 0,14, 3, 3, 3}, {35, 25,  8,  0, 5, 2, 3, 3, 3},
+    { 0,  0, 16,  0, 0,14, 3, 3, 3, 0}, {35, 25,  8,  0, 5, 2, 3, 3, 3},
     {80,  0,  6,  0, 5, 1, 3, 3, 3}, { 0,  0,  0,  0, 6, 0, 0, 0, 0},
 };
 
@@ -435,7 +420,7 @@ static int16_t g_list_tail;
 static int16_t g_free_head;
 static int g_player_count = 0;
 static int g_laser_count = 0;
-static int g_level = 1;
+static int g_level = 4;
 static bool g_game_over = false;
 static int g_frame_count = 0;
 static bool g_show_game_over = false;
@@ -443,6 +428,8 @@ static int g_score = 0;
 static int g_rescue_count = 0;
 static bool g_remove_laser[MAX_ENTITIES];
 static bool g_remove_enemy[MAX_ENTITIES];
+
+static bool g_debug_log = true;  // debug logging 
 
 // Terminal Input State (replaces SDL_GetKeyboardState)
 static uint8_t g_keys[256] = {0};
@@ -464,10 +451,10 @@ static int16_t g_grid_free;
 // --- Pixel dimensions for each entity type (used for collision, clamping, spawning) ---
 // Order matches EntityType enum: Player, Grunt, Quark, Hulk, Brain, Spheroid, Enforcer, Human, Laser, Terror, Electrode, Cruise
 static const int sprite_pixel_w[NUM_ENTITY_TYPES] = {
-    20, 18, 20, 24, 22, 18, 20, 10, 8, 10, 16, 4
+    20, 18, 20, 24, 22, 18, 20, 10, 8, 10, 16, 4, 24
 };
 static const int sprite_pixel_h[NUM_ENTITY_TYPES] = {
-    20, 18, 20, 24, 22, 18, 20, 22, 8, 10, 16, 4
+    20, 18, 20, 24, 22, 18, 20, 22, 8, 10, 16, 4, 24
 };
 #define PLAYER_SPRITE_W 20
 #define PLAYER_SPRITE_H 20
@@ -476,98 +463,100 @@ static const int sprite_pixel_h[NUM_ENTITY_TYPES] = {
 
 // --- Stub frames: one 1x1 blank cell per entity type ---
 // Placeholders until real sprite art is loaded from sprites.h.
+
+/* ── Stub infrastructure (always compiled, reused by both groups) ── */
 static const uint8_t stub_cell_blank[10] = {
-    ' ', 0, 0, 0,           /* space glyph, null-padded */
-    0xff, 0xff, 0xff,       /* fg white */
-    0x00, 0x00, 0x00        /* bg black */
+    ' ', 0,0,0, 0xff,0xff,0xff, 0x00,0x00,0x00
 };
 static const uint8_t* const stub_frame_rows[1] = { stub_cell_blank };
-static const SpriteFrame stub_frames[] = {
-    { stub_frame_rows, 1, 1, 0, 0 },  /* [0]  Player */
-    { stub_frame_rows, 1, 1, 0, 0 },  /* [1]  Grunt */
-    { stub_frame_rows, 1, 1, 0, 0 },  /* [2]  Quark */
-    { stub_frame_rows, 1, 1, 0, 0 },  /* [3]  Hulk */
-    { stub_frame_rows, 1, 1, 0, 0 },  /* [4]  Brain */
-    { stub_frame_rows, 1, 1, 0, 0 },  /* [5]  Spheroid */
-    { stub_frame_rows, 1, 1, 0, 0 },  /* [6]  Enforcer */
-    { stub_frame_rows, 1, 1, 0, 0 },  /* [7]  Human */
-    { stub_frame_rows, 1, 1, 0, 0 },  /* [8]  Laser */
-    { stub_frame_rows, 1, 1, 0, 0 },  /* [9]  Terror */
-    { stub_frame_rows, 1, 1, 0, 0 },  /* [10] Electrode */
-    { stub_frame_rows, 1, 1, 0, 0 },  /* [11] Cruise */
+static SpriteFrame stub_frames[] = {
+    { stub_frame_rows, 1, 1, 0, 0 },  /*  0 Player   */
+    { stub_frame_rows, 1, 1, 0, 0 },  /*  1 Grunt    */
+    { stub_frame_rows, 1, 1, 0, 0 },  /*  2 Quark    */
+    { stub_frame_rows, 1, 1, 0, 0 },  /*  3 Hulk     */
+    { stub_frame_rows, 1, 1, 0, 0 },  /*  4 Brain    */
+    { stub_frame_rows, 1, 1, 0, 0 },  /*  5 Spheroid */
+    { stub_frame_rows, 1, 1, 0, 0 },  /*  6 Enforcer */
+    { stub_frame_rows, 1, 1, 0, 0 },  /*  7 Human    */
+    { stub_frame_rows, 1, 1, 0, 0 },  /*  8 Laser    */
+    { stub_frame_rows, 1, 1, 0, 0 },  /*  9 Terror   */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* 10 Electrode */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* 11 Cruise   */
+    { stub_frame_rows, 1, 1, 0, 0 },  /* 12 Tank     */
 };
-// Shared indices table for stub sprites (single frame, index 0).
 static const int stub_indices[1] = { 0 };
-// --- Stub SpriteSet definitions ---
-// Facing: N S E W -- all point to frame index 0, count=1, no animation,
-// zero per-cycle offset.  The stub_indices[] array is shared across all
-// stubs because they all reference frame 0 of their respective frames[].
-//
-// Each stub is wrapped in #ifndef HAVE_SPRITE_<NAME> so that when
-// sprites.h provides real sprite data for an entity, the matching stub
-// is suppressed automatically -- no need to edit this file when adding
-// a new sprite.  To enable real sprite rendering for an entity, run
-// its .ans through build_sprites7 (which regenerates sprites.h with
-// both the SpriteSet definition and the matching #define), then
-// recompile bti.c.
-#ifndef HAVE_SPRITE_PLAYER
-static const SpriteSet sprite_player_set    = { "Player",    1, &stub_frames[0],  {{stub_indices,1,6,0,0,1,1},{stub_indices,1,6,0,0,1,1},{stub_indices,1,6,0,0,1,1},{stub_indices,1,6,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_GRUNT
-static const SpriteSet sprite_grunt_set     = { "Grunt",     1, &stub_frames[1],  {{stub_indices,1,8,0,0,1,1},{stub_indices,1,8,0,0,1,1},{stub_indices,1,8,0,0,1,1},{stub_indices,1,8,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_QUARK
-static const SpriteSet sprite_quark_set     = { "Quark",     1, &stub_frames[2],  {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_HULK
-static const SpriteSet sprite_hulk_set      = { "Hulk",      1, &stub_frames[3],  {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_BRAIN
-static const SpriteSet sprite_brain_set     = { "Brain",     1, &stub_frames[4],  {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_SPHEROID
-static const SpriteSet sprite_spheroid_set  = { "Spheroid",  1, &stub_frames[5],  {{stub_indices,1,2,0,0,1,1},{stub_indices,1,2,0,0,1,1},{stub_indices,1,2,0,0,1,1},{stub_indices,1,2,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_ENFORCER
-static const SpriteSet sprite_enforcer_set  = { "Enforcer",  1, &stub_frames[6],  {{stub_indices,1,2,0,0,1,1},{stub_indices,1,2,0,0,1,1},{stub_indices,1,2,0,0,1,1},{stub_indices,1,2,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_HUMAN
-static const SpriteSet sprite_human_set     = { "Human",     1, &stub_frames[7],  {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1}} };
-#endif
-/* ENT_HUMAN sub-variant stubs.  Each ENT_HUMAN instance picks one of
- * these three at spawn time via human_apply_variant(), based on
- * Entity.human_type (0=mommy, 1=daddy, 2=mikey).  All three default
- * to the same 1x1 stub cell when their .ans file hasn't been generated
- * yet; once the user runs build_sprites7 with ENT_MOMMY.ans /
- * ENT_DADDY.ans / ENT_MIKEY.ans, the real per-variant SpriteSets take
- * over and these stubs are #ifdef'd out by HAVE_SPRITE_MOMMY etc.
- *
- * All three reuse stub_frames[7] (the human stub slot) -- the stub
- * path doesn't care about per-variant art since it just renders a
- * colored rect from sprite_fallback_w/h.  Per-variant stub COLORS
- * are applied in render_all() based on human_type, not based on
- * which SpriteSet is bound. */
-#ifndef HAVE_SPRITE_MOMMY
-static const SpriteSet sprite_mommy_set     = { "Mommy",     1, &stub_frames[7],  {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_DADDY
-static const SpriteSet sprite_daddy_set     = { "Daddy",     1, &stub_frames[7],  {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_MIKEY
-static const SpriteSet sprite_mikey_set     = { "Mikey",     1, &stub_frames[7],  {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_LASER
-static const SpriteSet sprite_laser_set     = { "Laser",     1, &stub_frames[8],  {{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_TERROR
-static const SpriteSet sprite_terror_set    = { "Terror",    1, &stub_frames[9],  {{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_ELECTRODE
-static const SpriteSet sprite_electrode_set = { "Electrode", 1, &stub_frames[10], {{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1}} };
-#endif
-#ifndef HAVE_SPRITE_CRUISE
-static const SpriteSet sprite_cruise_set    = { "Cruise",    1, &stub_frames[11], {{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1}} };
-#endif
+
+/* ── Group 1: Always-compiled stubs (sprites.h lacks these) ── */
+static SpriteSet sprite_cruise_set = { "Cruise", 1, &stub_frames[11],
+    {{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},
+     {stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_laser_set  = { "Laser",  1, &stub_frames[8],
+    {{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},
+     {stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+
+/* ── Group 2: Stubs for sets sprites.h provides ── */
+#ifndef SPRITES_H
+static SpriteSet sprite_player_set   = { "Player",   1, &stub_frames[0],
+    {{stub_indices,1,6,0,0,1,1},{stub_indices,1,6,0,0,1,1},
+     {stub_indices,1,6,0,0,1,1},{stub_indices,1,6,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_grunt_set    = { "Grunt",    1, &stub_frames[1],
+    {{stub_indices,1,8,0,0,1,1},{stub_indices,1,8,0,0,1,1},
+     {stub_indices,1,8,0,0,1,1},{stub_indices,1,8,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_hulk_set     = { "Hulk",     1, &stub_frames[3],
+    {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_spheroid_set = { "Spheroid", 1, &stub_frames[5],
+    {{stub_indices,1,2,0,0,1,1},{stub_indices,1,2,0,0,1,1},
+     {stub_indices,1,2,0,0,1,1},{stub_indices,1,2,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_enforcer_set = { "Enforcer", 1, &stub_frames[6],
+    {{stub_indices,1,2,0,0,1,1},{stub_indices,1,2,0,0,1,1},
+     {stub_indices,1,2,0,0,1,1},{stub_indices,1,2,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_human_set   = { "Human",    1, &stub_frames[7],
+    {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+/* Human variants — share stub_frames[7], picked at spawn */
+static SpriteSet sprite_mommy_set   = { "Mommy",    1, &stub_frames[7],
+    {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_daddy_set   = { "Daddy",    1, &stub_frames[7],
+    {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_mikey_set   = { "Mikey",    1, &stub_frames[7],
+    {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_terror_set  = { "Terror",   1, &stub_frames[9],
+    {{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},
+     {stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_tank_set     = { "Tank",     1, &stub_frames[12],
+    {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_brain_set   = { "Brain",    1, &stub_frames[4],
+    {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_quark_set   = { "Quark",    1, &stub_frames[2],
+    {{stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,1,4,0,0,1,1},{stub_indices,1,4,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+static SpriteSet sprite_electrode_set = { "Electrode", 1, &stub_frames[10],
+    {{stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},
+     {stub_indices,1,1,0,0,1,1},{stub_indices,1,1,0,0,1,1},
+     {stub_indices,0,1,0,0,1,1},{stub_indices,0,1,0,0,1,1}} };
+#endif /* SPRITES_H */
+
 
 // Forward declarations
 static Entity* spawn_entity(int16_t x, int16_t y, EntityType type);
@@ -596,34 +585,9 @@ typedef struct {
     bool dirty;
 } EditorWalk;
 
-/* Per-frame placement-offset shadow.  Indexed by [entity_type][frame_idx].
- *
- * Mirrors SpriteFrame.ox / oy (the per-frame placement offset baked from
- * .ans OffsetX+HotspotX / OffsetY+HotspotY by build_sprites7.c).  The
- * editor lets the user tune these interactively with i/j/k/l keys; the
- * shadow is consulted by editor_render_walktable() so the live preview
- * reflects edits immediately, and on save the matching SpriteFrame
- * initializer line in sprites.h is rewritten with the new values.
- *
- * TODO / design note: FacingInfo also has offset_x/offset_y (per-facing
- * placement offsets), but those are almost always left at 0,0 in
- * practice.  The per-frame ox/oy on SpriteFrame is the offset that
- * actually matters -- it's tied to the shape of the sprite and the
- * amount of blank space around it relative to the normalized sprite
- * size, which is a per-frame property, not a per-facing one.  Consider
- * eliminating FacingInfo.offset_x/offset_y in a future cleanup pass
- * and consolidating all placement offsetting onto SpriteFrame.ox/oy.
- * The render path already sums both, so removing the per-facing pair
- * is a non-breaking change. */
-typedef struct {
-    int  ox, oy;   /* shadow copy of SpriteFrame.ox / oy */
-    bool dirty;    /* set when user modifies; only dirty entries are saved */
-} EditorFrameOffset;
-
 static bool       g_editor_active = false;
 static int        g_editor_entity = -1;     /* EntityType being edited */
-static EditorWalk g_editor_walks[NUM_ENTITY_TYPES][4]; /* [type][N,S,E,W] */
-static EditorFrameOffset g_editor_frame_offsets[NUM_ENTITY_TYPES][EDITOR_MAX_FRAMES];
+static EditorWalk g_editor_walks[NUM_ENTITY_TYPES][NUM_FACINGS]; /* [type][N,S,W,E,WH,EH] */
 
 /* When the editor is editing ENT_HUMAN, this picks which sub-variant's
  * SpriteSet (mommy/daddy/mikey) is the active edit target.  Cycled by
@@ -633,6 +597,13 @@ static EditorFrameOffset g_editor_frame_offsets[NUM_ENTITY_TYPES][EDITOR_MAX_FRA
  * Range: 0..2.  Persists across editor sessions within one process.
  * Default 0 (mommy) matches the first spawn in spawn_wave. */
 static int        g_editor_human_variant = 0;
+
+/* Timed status message for save/export feedback.
+ * Displayed at the bottom of the walktable editor when > 0.
+ * Decremented each frame; the message disappears after ~2 seconds.
+ */
+static char       g_editor_status_msg[128] = {0};
+static int        g_editor_status_timer = 0;
 
 // ============================================================
 //  LINKED LIST & SPATIAL GRID MANAGEMENT
@@ -1464,6 +1435,91 @@ static void ai_human(Entity* e) {
     }
 }
 
+/* ai_tank -- wall-biased wandering AI.
+ *
+ * Movement model: the Tank picks a direction (N/S/E/W) biased AWAY from
+ * the nearest wall, then commits to that direction for a random run length.
+ * The run length is proportional to the available travel distance in the
+ * chosen direction, between 30-80% of the remaining arena span.
+ *
+ * BIAS MATH:
+ *   For each cardinal direction, compute the fraction of arena traversable
+ *   before hitting a wall.  This fraction directly weights that direction's
+ *   selection probability.  Example: if the tank is at Y=10% of arena height,
+ *   the bias is 90% South, 10% North, 50% East, 50% West.
+ *
+ *   To avoid zero-weighting directions that are against a wall (which would
+ *   make the tank unable to choose that direction even when it's the only
+ *   viable move), we add a small floor bias (1/8) to every direction.
+ *
+ * RUN LENGTH:
+ *   After choosing direction D, compute the available distance in that
+ *   direction (arena_edge - current_pos).  Pick a random fraction between
+ *   0.30 and 0.80 of that distance.  Convert to ticks at TANK_SPEED:
+ *     run_ticks = (run_distance_fixed / TANK_SPEED)
+ *   Set attitude_counter to run_ticks; when it expires, re-decide.
+ *
+ * SPEED: TANK_SPEED = 48 = 0.75x HULK_SPEED.  Heavy but purposeful.
+ * Tanks don't chase or flee -- they just patrol.  Lethal to the player
+ * on contact (handled in collision code).
+ */
+static void ai_tank(Entity* e) {
+    e->attitude_counter--;
+    if (e->attitude_counter > 0) return; /* still committed to current run */
+
+    /* Compute wall bias weights for each direction.
+     * wy/wx are in fixed-point; SCREEN_WIDTH*COORD_SCALE and
+     * SCREEN_HEIGHT*COORD_SCALE are the arena extents.
+     * frac = how much room is available in that direction (0..1). */
+    int32_t arena_w = (int32_t)SCREEN_WIDTH * COORD_SCALE;
+    int32_t arena_h = (int32_t)SCREEN_HEIGHT * COORD_SCALE;
+    int frac_n = (int)(arena_h > 0 ? (int64_t)e->wy * 100 / arena_h : 50); /* room to go N */
+    int frac_s = 100 - frac_n;                                             /* room to go S */
+    int frac_w = (int)(arena_w > 0 ? (int64_t)e->wx * 100 / arena_w : 50); /* room to go W */
+    int frac_e = 100 - frac_w;                                             /* room to go E */
+
+    /* Add floor bias (12) so no direction is ever zero-weighted,
+     * then build a weighted direction table. */
+    int weight[4]; /* N=0, S=1, W=2, E=3 */
+    weight[DIR_UP]    = frac_n + 12;
+    weight[DIR_DOWN]  = frac_s + 12;
+    weight[DIR_LEFT]  = frac_w + 12;
+    weight[DIR_RIGHT] = frac_e + 12;
+
+    int total = weight[0] + weight[1] + weight[2] + weight[3];
+    int roll = rand() % total;
+    int dir = DIR_DOWN; /* fallback */
+    int acc = 0;
+    for (int d = 0; d < 4; d++) {
+        acc += weight[d];
+        if (roll < acc) { dir = d; break; }
+    }
+
+    /* Compute run length: 30-80% of available distance in chosen dir,
+     * converted to ticks at TANK_SPEED. */
+    int16_t speed = TANK_SPEED;
+    int32_t available = 0;
+    switch (dir) {
+        case DIR_UP:    available = e->wy; break;
+        case DIR_DOWN:  available = arena_h - e->wy; break;
+        case DIR_LEFT:  available = e->wx; break;
+        case DIR_RIGHT: available = arena_w - e->wx; break;
+    }
+    /* Pick random fraction in [30%, 80%]. */
+    int frac_lo = 30, frac_hi = 80;
+    int pct = frac_lo + rand() % (frac_hi - frac_lo + 1);
+    int32_t run_dist = (available * pct) / 100;
+    /* Minimum run of 1 tick's worth of movement. */
+    int run_ticks = (int)(run_dist / speed);
+    if (run_ticks < 1) run_ticks = 1;
+    /* Cap at a reasonable maximum (prevent extremely long runs at start). */
+    if (run_ticks > 300) run_ticks = 300;
+
+    e->vx = (dir == DIR_LEFT)  ? -speed : (dir == DIR_RIGHT) ? speed : 0;
+    e->vy = (dir == DIR_UP)    ? -speed : (dir == DIR_DOWN)  ? speed : 0;
+    e->attitude_counter = run_ticks;
+}
+
 /* ai_grunt -- chase-the-player AI with shyness repulsion.
  *
  * Two behaviors layered:
@@ -1578,28 +1634,105 @@ static void ai_hulk(Entity* e) {
     }
 }
 
-/* ai_quark -- wall-avoidance AI.
+/* ai_brain -- hunt-humans AI (currently same algorithm as Hulk).
  *
- * Quarks accelerate away from walls: the closer to a wall, the stronger
- * the thrust.  The thrust formula is (margin - dist) * COORD_SCALE / margin
- * -- a linear ramp from 0 (at exactly margin) to COORD_SCALE (at the wall).
- * Multiplied by 10 because the per-tick nudge was too small otherwise.
+ * Has its own function so Brain behavior can diverge from Hulk
+ * in future steps (e.g. different speed, chase range, flee from
+ * player, etc.). */
+static void ai_brain(Entity* e) {
+    if (e->target_entity >= 0) {
+        Entity* target = &g_entities[e->target_entity];
+        if (!target->active || target->type != ENT_HUMAN) e->target_entity = -1;
+    }
+    if (e->target_entity >= 0) {
+        Entity* target = &g_entities[e->target_entity];
+        if (e->target_counter > 0) { e->target_counter--; return; }
+        int16_t dx = target->wx - e->wx, dy = target->wy - e->wy;
+        if (abs(dx) > abs(dy)) { e->vx = (dx > 0) ? HULK_SPEED : -HULK_SPEED; e->vy = 0; }
+        else { e->vx = 0; e->vy = (dy > 0) ? HULK_SPEED : -HULK_SPEED; }
+        e->target_counter = e->target_period; return;
+    }
+    e->attitude_counter--;
+    if (e->attitude_counter <= 0) {
+        int dir = rand() % 4; int16_t spd = HULK_SPEED;
+        e->vx = (dir == DIR_LEFT) ? -spd : (dir == DIR_RIGHT) ? spd : 0;
+        e->vy = (dir == DIR_UP) ? -spd : (dir == DIR_DOWN) ? spd : 0;
+        e->attitude_counter = e->attitude_period + (rand() % (e->attitude_period / 4)) - (e->attitude_period / 8);
+    }
+    int cell_x = (int)e->wx / GRID_CELL_SIZE, cell_y = (int)e->wy / GRID_CELL_SIZE;
+    for (int dy2 = -3; dy2 <= 3; dy2++) {
+        for (int dx2 = -3; dx2 <= 3; dx2++) {
+            int cx = cell_x + dx2, cy = cell_y + dy2;
+            if (cx < 0 || cx >= GRID_COLS || cy < 0 || cy >= GRID_ROWS) continue;
+            int cell = cy * GRID_COLS + cx;
+            for (int nidx = g_grid_heads[cell]; nidx != -1; nidx = g_grid_nodes[nidx].next) {
+                Entity* other = &g_entities[g_grid_nodes[nidx].entity_idx];
+                if (!other->active || other->type != ENT_HUMAN) continue;
+                int32_t dist = abs((int32_t)other->wx - (int32_t)e->wx) + abs((int32_t)other->wy - (int32_t)e->wy);
+                if (dist < SCREEN_TO_FIXED(192)) {
+                    e->target_entity = g_grid_nodes[nidx].entity_idx; e->target_counter = e->target_period;
+                    int16_t dx = other->wx - e->wx, dy = other->wy - e->wy;
+                    if (abs(dx) > abs(dy)) { e->vx = (dx > 0) ? HULK_SPEED : -HULK_SPEED; e->vy = 0; }
+                    else { e->vx = 0; e->vy = (dy > 0) ? HULK_SPEED : -HULK_SPEED; }
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/* ai_quark -- corner-seeking spawner AI (like Spheroid, but launches Tanks).
  *
- * Capped at QUARK_SPEED * COORD_SCALE per axis to prevent runaway
- * acceleration if the quark gets pinned in a corner.
- *
- * NOTE: quarks have no chase behavior -- they just bounce around the
- * arena.  This makes them more of a moving obstacle than an active threat. */
+ * State machine identical to ai_spheroid:
+ *   SPHEROID_STATE_PAUSE: rest in a corner, then transition to MOVE.
+ *   SPHEROID_STATE_MOVE: ramp speed, drift toward corners.  On arrival,
+ *      spawn 1-4 tanks and return to PAUSE.
+ * Reuses SPHEROID_STATE_* constants and SPHEROID_CORNER_DIST etc. */
 static void ai_quark(Entity* e) {
-    int mask = get_wall_bitmask(e);
-    int32_t margin = SCREEN_TO_FIXED(100);
-    if (mask & WALL_LEFT) { int32_t dist = e->wx; if (dist < margin) e->vx += (int16_t)((margin - dist) * COORD_SCALE / margin)*10; }
-    if (mask & WALL_RIGHT) { int32_t dist = SCREEN_TO_FIXED(SCREEN_WIDTH) - e->wx; if (dist < margin) e->vx -= (int16_t)((margin - dist) * COORD_SCALE / margin)*10; }
-    if (mask & WALL_TOP) { int32_t dist = e->wy; if (dist < margin) e->vy += (int16_t)((margin - dist) * COORD_SCALE / margin)*10; }
-    if (mask & WALL_BOTTOM) { int32_t dist = SCREEN_TO_FIXED(SCREEN_HEIGHT) - e->wy; if (dist < margin) e->vy -= (int16_t)((margin - dist) * COORD_SCALE / margin)*10; }
+    if (e->state == SPHEROID_STATE_PAUSE) {
+        e->target_counter--;
+        if (e->target_counter <= 0) {
+            e->state = SPHEROID_STATE_MOVE; e->fire_counter = 0;
+            int16_t spd = QUARK_SPEED * COORD_SCALE;
+            int16_t dx = (rand() % 2000) - 1000, dy = (rand() % 2000) - 1000;
+            int16_t hw = SCREEN_TO_FIXED(SCREEN_WIDTH / 2), hh = SCREEN_TO_FIXED(SCREEN_HEIGHT / 2);
+            if (e->wx < hw) dx = abs(dx); else dx = -abs(dx);
+            if (e->wy < hh) dy = abs(dy); else dy = -abs(dy);
+            int16_t mag = (abs(dx) > abs(dy)) ? abs(dx) : abs(dy);
+            if (mag == 0) { dx = 500; dy = 800; mag = 800; }
+            e->vx = (dx * spd) / mag; e->vy = (dy * spd) / mag;
+        }
+        return;
+    }
+    if (e->vx == 0 && e->vy == 0) {
+        int16_t spd = QUARK_SPEED * COORD_SCALE / 2;
+        e->vx = (rand() % 2) ? spd : -spd; e->vy = (rand() % 2) ? spd : -spd; e->fire_counter = 0;
+    }
+    if (e->fire_counter < SPHEROID_RAMP_TIME) { e->vx = (e->vx * 11) / 10; e->vy = (e->vy * 11) / 10; e->fire_counter++; }
+    else {
+        e->vx += (rand() % (SPHEROID_NUDGE_RANGE * 2 + 1)) - SPHEROID_NUDGE_RANGE;
+        e->vy += (rand() % (SPHEROID_NUDGE_RANGE * 2 + 1)) - SPHEROID_NUDGE_RANGE;
+        int16_t wall_x_min = SCREEN_TO_FIXED(SCREEN_WIDTH * 12 / 100), wall_x_max = SCREEN_TO_FIXED(SCREEN_WIDTH * 88 / 100);
+        int16_t wall_y_min = SCREEN_TO_FIXED(SCREEN_HEIGHT * 12 / 100), wall_y_max = SCREEN_TO_FIXED(SCREEN_HEIGHT * 88 / 100);
+        if (e->wx < wall_x_min || e->wx > wall_x_max) { e->vy = (e->vy * 10) / 9; e->vx = (e->vx * 8) / 10; }
+        if (e->wy < wall_y_min || e->wy > wall_y_max) { e->vx = (e->vx * 10) / 9; e->vy = (e->vy * 8) / 10; }
+    }
     int16_t max_speed = QUARK_SPEED * COORD_SCALE;
-    if (abs(e->vx) > max_speed) e->vx = (e->vx > 0) ? max_speed : -max_speed;
-    if (abs(e->vy) > max_speed) e->vy = (e->vy > 0) ? max_speed : -max_speed;
+    int32_t mag = isqrt((int32_t)e->vx * e->vx + (int32_t)e->vy * e->vy);
+    if (mag > max_speed && mag > 0) { e->vx = (e->vx * max_speed) / mag; e->vy = (e->vy * max_speed) / mag; }
+    int cd = SCREEN_TO_FIXED(SPHEROID_CORNER_DIST);
+    bool in_corner = (e->wx < cd && e->wy < cd) || (e->wx > SCREEN_TO_FIXED(SCREEN_WIDTH) - cd && e->wy < cd) || (e->wx < cd && e->wy > SCREEN_TO_FIXED(SCREEN_HEIGHT) - cd) || (e->wx > SCREEN_TO_FIXED(SCREEN_WIDTH) - cd && e->wy > SCREEN_TO_FIXED(SCREEN_HEIGHT) - cd);
+    if (in_corner) {
+        e->vx = (e->vx * 9) / 10; e->vy = (e->vy * 9) / 10;
+        if (abs(e->vx) < 2 && abs(e->vy) < 2) {
+            e->vx = 0; e->vy = 0;
+            if (e->spawn_count < e->spawn_max) {
+                int count = 1 + (rand() % 4);
+                for (int i = 0; i < count && e->spawn_count < e->spawn_max; i++) { Entity* tank = spawn_entity(e->wx, e->wy, ENT_TANK); if (tank) e->spawn_count++; }
+            }
+            e->state = SPHEROID_STATE_PAUSE; e->target_counter = SPHEROID_REST_TIME;
+        }
+    }
 }
 
 /* ai_spheroid -- corner-seeking spawner AI.
@@ -1811,12 +1944,13 @@ static Entity* spawn_entity(int16_t wx, int16_t wy, EntityType type) {
             e->anim_counter = rand() % 3;
             { int corner = rand() % 4; switch (corner) { case 0: e->mtgx = 0; e->mtgy = 0; break; case 1: e->mtgx = SCREEN_TO_FIXED(SCREEN_WIDTH); e->mtgy = 0; break; case 2: e->mtgx = 0; e->mtgy = SCREEN_TO_FIXED(SCREEN_HEIGHT); break; case 3: e->mtgx = SCREEN_TO_FIXED(SCREEN_WIDTH); e->mtgy = SCREEN_TO_FIXED(SCREEN_HEIGHT); break; } int16_t dx = e->mtgx - e->wx, dy = e->mtgy - e->wy; int32_t dist = abs(dx) + abs(dy); if (dist == 0) dist = 1; int16_t sspd = SPHEROID_SPEED * COORD_SCALE; e->vx = (int16_t)(((int32_t)dx * sspd) / dist); e->vy = (int16_t)(((int32_t)dy * sspd) / dist); } break;
         case ENT_ENFORCER: e->anim = &sprite_enforcer_set; e->attitude_period = 20; e->attitude_counter = 20; e->fire_period = 40; e->fire_counter = 40; e->tick_period = 2; e->tick_phase = 0; { int mask = get_wall_bitmask(e); int16_t speed = ENFORCER_SPEED * COORD_SCALE; e->vx = speed + rand() % speed * (((mask & WALL_LEFT) != 0) - ((mask & WALL_RIGHT) != 0)); e->vy = speed + rand() % speed * (((mask & WALL_TOP) != 0) - ((mask & WALL_BOTTOM) != 0)); } break;
-        case ENT_BRAIN: e->anim = &sprite_brain_set; e->tick_period = 4; e->tick_phase = rand() % e->tick_period; e->tick_counter = e->tick_period; e->attitude_period = 32; e->attitude_counter = e->attitude_period; e->fire_period = 32 + (rand() % 32); break;
+        case ENT_BRAIN: e->anim = &sprite_brain_set; e->tick_period = 4; e->tick_phase = rand() % e->tick_period; e->tick_counter = e->tick_period; e->attitude_period = 32; e->attitude_counter = rand() % e->attitude_period; e->target_entity = -1; e->target_period = 8; e->target_counter = 0; break;
         case ENT_CRUISE: e->anim = &sprite_cruise_set; e->tick_period = 1; e->attitude_counter = 20; break;
         case ENT_TERROR: e->anim = &sprite_terror_set; e->tick_period = 1; break;
         case ENT_LASER: e->anim = &sprite_laser_set; e->tick_period = 1; break;
-        case ENT_ELECTRODE: e->anim = &sprite_electrode_set; e->tick_period = 9999999; break;
-        case ENT_QUARK: e->anim = &sprite_quark_set; e->tick_period = 4; break;
+        case ENT_ELECTRODE: e->anim = &sprite_electrode_set; e->tick_period = 9999999; e->state = (g_level - 1) % sprite_electrode_set.total_frames; break;
+        case ENT_QUARK: e->anim = &sprite_quark_set; e->tick_period = 4; e->attitude_period = 4; e->attitude_counter = rand() % 4; e->fire_period = 128; e->fire_counter = 128; e->spawn_count = 0; e->spawn_max = 4; e->state = SPHEROID_STATE_MOVE; e->target_counter = 0; e->target_period = SPHEROID_WINDUP_TICKS; break;
+        case ENT_TANK: e->anim = &sprite_tank_set; e->tick_period = 1; e->attitude_period = 1; e->attitude_counter = 1; break;
         default: e->active = false; free_entity(idx); return NULL;
     }
     link_entity(idx); return e;
@@ -1884,7 +2018,7 @@ static void reset_level(void) {
     int wave_idx = (g_level - 1) % 40;
     const LevelWave* w = &g_waves[wave_idx];
     #define SPAWN_WITH_SAFETY(count, type) for (int _i = 0; _i < (count); _i++) { int _attempts = 0; int16_t _x, _y; do { _x = rand() % SCREEN_TO_FIXED(SCREEN_WIDTH); _y = rand() % SCREEN_TO_FIXED(SCREEN_HEIGHT); _attempts++; if (_attempts > 50) break; } while (!is_position_safe(_x, _y)); spawn_entity(_x, _y, (type)); }
-    SPAWN_WITH_SAFETY(w->grunts, ENT_GRUNT) SPAWN_WITH_SAFETY(w->electrodes, ENT_ELECTRODE) SPAWN_WITH_SAFETY(w->hulks, ENT_HULK) SPAWN_WITH_SAFETY(w->brains, ENT_BRAIN) SPAWN_WITH_SAFETY(w->spheroids, ENT_SPHEROID) SPAWN_WITH_SAFETY(w->quarks, ENT_QUARK)
+    SPAWN_WITH_SAFETY(w->grunts, ENT_GRUNT) SPAWN_WITH_SAFETY(w->electrodes, ENT_ELECTRODE) SPAWN_WITH_SAFETY(w->hulks, ENT_HULK) SPAWN_WITH_SAFETY(w->brains, ENT_BRAIN) SPAWN_WITH_SAFETY(w->spheroids, ENT_SPHEROID) SPAWN_WITH_SAFETY(w->quarks, ENT_QUARK) SPAWN_WITH_SAFETY(w->tanks, ENT_TANK)
     #undef SPAWN_WITH_SAFETY
     for (int i = 0; i < w->mommies; i++) { int attempts = 0; int16_t x, y; do { x = rand() % SCREEN_TO_FIXED(SCREEN_WIDTH); y = rand() % SCREEN_TO_FIXED(SCREEN_HEIGHT); attempts++; if (attempts > 50) break; } while (!is_position_safe(x, y)); Entity* h = spawn_entity(x, y, ENT_HUMAN); if (h) human_apply_variant(h, 0); }
     for (int i = 0; i < w->daddies; i++) { int attempts = 0; int16_t x, y; do { x = rand() % SCREEN_TO_FIXED(SCREEN_WIDTH); y = rand() % SCREEN_TO_FIXED(SCREEN_HEIGHT); attempts++; if (attempts > 50) break; } while (!is_position_safe(x, y)); Entity* h = spawn_entity(x, y, ENT_HUMAN); if (h) human_apply_variant(h, 1); }
@@ -2299,6 +2433,9 @@ static void update_entities(void) {
                 case ENT_HUMAN: ai_human(e); break; case ENT_GRUNT: ai_grunt(e); break;
                 case ENT_SPHEROID: ai_spheroid(e); break; case ENT_ENFORCER: ai_enforcer(e); break;
                 case ENT_HULK: ai_hulk(e); break;
+                case ENT_BRAIN: ai_brain(e); break;
+                case ENT_QUARK: ai_quark(e); break;
+                case ENT_TANK: ai_tank(e); break;
                 default: break;
             }
             e->wx += e->vx; e->wy += e->vy;
@@ -2373,8 +2510,8 @@ static void update_entities(void) {
  * entity:
  *   - ENT_HUMAN: rescue!  Increment g_rescue_count, award points (1000 *
  *     streak, capped at 5000), spawn a score-bonus decal, mark the human
- *     for removal.  The "scorebump" global is set to 100 to trigger the
- *     rainbow score-color animation in draw_score_text().
+ *     for removal.  Sets scorebump=100 to trigger the brightness pulse in
+ *     draw_score_text().
  *   - ENT_TERROR/CRUISE/GRUNT/HULK/SPHEROID/ENFORCER/BRAIN/QUARK/ELECTRODE:
  *     player dies.  Decrement lives, mark the enemy for removal, set
  *     death_timer=30, capture ghost_x/ghost_y (so AI functions chasing the
@@ -2406,9 +2543,9 @@ case ENT_HUMAN: {
     spawn_decal(DECAL_SCORE_BONUS, e->wx, e->wy, 60, points, DECAL_LAYER_OVERLAY);
     g_remove_enemy[g_grid_nodes[nidx].entity_idx] = true; 
     g_score += points;
-    if (points > 1000) scorebump = 100;  // Trigger brightness bump for big scores
+    if (points >= 1000) scorebump = 100;  // Trigger brightness bump for big scores
 } break;
-                        case ENT_TERROR: case ENT_CRUISE: case ENT_GRUNT: case ENT_HULK: case ENT_SPHEROID: case ENT_ENFORCER: case ENT_BRAIN: case ENT_QUARK: case ENT_ELECTRODE:
+                        case ENT_TERROR: case ENT_CRUISE: case ENT_GRUNT: case ENT_HULK: case ENT_SPHEROID: case ENT_ENFORCER: case ENT_BRAIN: case ENT_QUARK: case ENT_ELECTRODE: case ENT_TANK:
                             g_remove_enemy[g_grid_nodes[nidx].entity_idx] = true; pl->lives--; pl->ghost_x = pl->wx; pl->ghost_y = pl->wy; pl->active = false; pl->death_timer = 30;
                             if (pl->lives <= 0) { g_game_over = true; g_show_game_over = true; } break;
                         default: break;
@@ -2470,13 +2607,14 @@ static void process_entity_vs_entity(void) {
                         g_remove_laser[idx] = true; 
                         g_remove_enemy[g_grid_nodes[nidx].entity_idx] = true;
                         switch (b->type) {
-                            case ENT_GRUNT: g_score += 100; break; 
-                            case ENT_BRAIN: g_score += 500; break;
-                            case ENT_SPHEROID: g_score += 250; break; 
-                            case ENT_ENFORCER: g_score += 200; break;
-                            case ENT_ELECTRODE: g_score += 50; break; 
+                            case ENT_GRUNT: g_score += 100; if (scorebump < 50) scorebump = 50; break; 
+                            case ENT_BRAIN: g_score += 500; if (scorebump < 75) scorebump = 75; break;
+                            case ENT_SPHEROID: g_score += 250; if (scorebump < 75) scorebump = 75; break; 
+                            case ENT_ENFORCER: g_score += 200; if (scorebump < 50) scorebump = 50; break;
+                            case ENT_ELECTRODE: g_score += 50; if (scorebump < 25) scorebump = 25; break; 
                             case ENT_TERROR: break;
-                            case ENT_CRUISE: g_score += 300; break; 
+                            case ENT_CRUISE: g_score += 300; if (scorebump < 75) scorebump = 75; break; 
+                            case ENT_TANK: g_score += 400; if (scorebump < 75) scorebump = 75; break;
                             default: break;
                         }
                     }
@@ -2537,7 +2675,7 @@ static void check_level_complete(void) {
     int enemy_count = 0;
     for (int16_t idx = g_list_head; idx != -1; idx = g_next[idx]) {
         Entity* e = &g_entities[idx];
-        if (e->active && e->type != ENT_LASER && e->type != ENT_TERROR && e->type != ENT_HULK && e->type != ENT_HUMAN && e->type != ENT_ELECTRODE && e->type != ENT_CRUISE) enemy_count++;
+        if (e->active && e->type != ENT_LASER && e->type != ENT_TERROR && e->type != ENT_HULK && e->type != ENT_HUMAN && e->type != ENT_ELECTRODE && e->type != ENT_CRUISE && e->type != ENT_TANK) enemy_count++;
     }
     // If no primary threats remain, advance to the next wave
     if (enemy_count == 0 && !g_game_over) {
@@ -2671,30 +2809,23 @@ static void draw_entity_text(Entity* e) {
  * display doesn't shift width as the score grows.  Each digit is rendered
  * as a 3x3 grid of Unicode box-drawing characters from digit_sprites[].
  *
- * COLOR ANIMATION: the global `scorebump` (0-100, decays by 4 per frame)
- * is set to 100 by process_player_vs_entities() when a big score bonus
- * is awarded.  While scorebump > 0, the digit color interpolates from
- * green (default) toward white:
- *   r = scorebump * 2  (clamped to 255)
- *   g = 255
- *   b = scorebump * 2  (clamped to 255)
- * The result is a brief "flash to white" effect when the player scores
- * big, fading back to green over ~25 frames (~0.4s at 60fps). */
+ * COLOR ANIMATION: the global `scorebump` (0-100, set at score-increase
+ * sites, decays by 4/frame) interpolates the digit color from the
+ * baseline green toward white:
+ *   r = 0   + (255 - 0)   * scorebump / 100   (0 -> 255)
+ *   g = 255 + (255 - 255) * scorebump / 100   (always 255)
+ *   b = 0   + (255 - 0)   * scorebump / 100   (0 -> 255)
+ * At scorebump=100 the digits flash pure white; at 0 they're normal green.
+ * Decay of 4/frame from 100 = ~25 frames (~0.4s at 60fps). */
 static void draw_score_text(void) {
     if (!text_buffer) return;
 
-    // Decay the bump (~0.42 seconds at 60fps)
-    if (scorebump > 0) {
-        scorebump -= 4;
-        if (scorebump < 0) scorebump = 0;
-    }
-
     // Calculate color: green baseline, boosted toward white when bump > 0
-    unsigned char r = (unsigned char)(scorebump * 2);  // 0-200
+    // Multiply before dividing to avoid integer truncation to zero.
+    int bump = scorebump;
+    unsigned char r = (unsigned char)((255 * bump) / 100);
     unsigned char g = 255;
-    unsigned char b = (unsigned char)(scorebump * 2);  // 0-200
-    if (r > 255) r = 255;
-    if (b > 255) b = 255;
+    unsigned char b = (unsigned char)((255 * bump) / 100);
 
     char score_str[8];
     snprintf(score_str, sizeof(score_str), "%07d", g_score);
@@ -2715,6 +2846,12 @@ static void draw_score_text(void) {
                 }
             }
         }
+    }
+
+    // Decay AFTER blit so the frame that triggered the bump renders at full brightness
+    if (scorebump > 0) {
+        scorebump -= 4;
+        if (scorebump < 0) scorebump = 0;
     }
 }
 
@@ -2788,31 +2925,43 @@ static void draw_score_text(void) {
  *     advancing (we don't negate it), so the frame index jumps to a
  *     "random" point in the cycle on reversal.  This may be the source
  *     of the perceived discontinuity. */
+
+
 static int stride_cycle(int16_t pos, int stride, int scale, int count, int axis) {
     if (count <= 0) return 0;
     if (stride <= 0) return 0;
     int32_t cells;        // cells = world-pos -> terminal-cell index (one-shot divide, no dead zones)
     if (axis == 0) {
-        cells = ((int32_t)pos * g_term_cols) / ((int32_t)COORD_SCALE * SCREEN_WIDTH);        // X axis: wx / COORD_SCALE * term_cols / SCREEN_WIDTH
+        /* X axis: count in full columns.  editor_full_col_step() moves
+         * by one full column, so cells increments by exactly 1 per step. */
+        cells = ((int32_t)pos * g_term_cols) / ((int32_t)COORD_SCALE * SCREEN_WIDTH);
     } else {
-        cells = ((int32_t)pos * g_term_rows) / ((int32_t)COORD_SCALE * SCREEN_HEIGHT);        // Y axis: wy / COORD_SCALE * term_rows / SCREEN_HEIGHT
+        /* Y axis: count in HALF-ROWS (double resolution).
+         * editor_half_row_step() moves by one half-row; using
+         * term_rows*2 in the numerator makes cells increment by
+         * exactly 1 per half-row step -- no truncation dead zones,
+         * no fractional cell values.  Matches the half-row parity
+         * formula used by Grunt/Enforcer/Spheroid. */
+        cells = ((int32_t)pos * ((int32_t)g_term_rows * 2))
+             / ((int32_t)COORD_SCALE * SCREEN_HEIGHT);
     }
     if (cells < 0) cells = 0;
     /* INVERTED SCALE: bigger scale = FASTER animation.
      *
      * The math is `frame = ((cells * scale) / stride) % count` -- we
      * multiply by scale BEFORE dividing by stride so sub-stride
-     * precision is preserved in pure integer arithmetic.  This lets
-     * scale values larger than stride yield a fractional effective
-     * stride (e.g. stride=4, scale=8 -> one frame advance per
-     * half-cell, which is exactly what the Hulk N/S walk needs).
+     * precision is preserved in pure integer arithmetic.
      *
-     * Defaults of scale=1 reproduce the legacy `cells / stride`
-     * behaviour bit-for-bit, so existing sprites are unchanged
-     * until the user hand-tunes or `btk -e` raises scale above 1.
+     * Y-axis cells are in half-rows; step_period and scale control
+     * how many half-rows per frame advance.  Default step_period=1,
+     * scale=1 gives 1 frame per half-row step (fastest).
+     * step_period=2 gives 1 frame per full row.
+     *
+     * X-axis cells are in full columns; step_period=1, scale=1
+     * gives 1 frame per full-column step.
      */
     if (scale <= 0) scale = 1;
-    return (int)(((cells * (int32_t)scale) / stride) % count);    // INVERTED: bigger scale = faster animation (multiply before divide preserves precision)
+    return (int)(((cells * (int32_t)scale) / stride) % count);
 }
 
 /* entity_select_frame -- per-entity-type picker that maps (wx, wy,
@@ -2926,142 +3075,134 @@ static int entity_select_frame(EntityType type, int16_t wx, int16_t wy,
             // rate -- bigger scale = faster animation.  See stride_cycle()
             // for the inverted-math rationale.
             //
-            // Both Hulk and Human use purely positional animation: no
-            // temporal counter, no bank selection -- the stride IS the
-            // frame index.  Humans share the same scheme so their walk
-            // cycles advance naturally with movement distance, one frame
-            // per half-cell when scale = 2 * step_period.
+            // Hulk and Human use purely positional animation: no temporal
+            // counter, no bank selection -- the stride IS the frame index.
+            // The walk cycle advances naturally with movement distance.
             (void)anim_phase;
             int axis = (facing_dir == DIR_UP || facing_dir == DIR_DOWN) ? 1 : 0;
             int16_t pos = axis ? wy : wx;
             return stride_cycle(pos, spatial_stride, spatial_scale, count, axis);
         }
-        case ENT_SPHEROID: {
-            // HYBRID picker -- half-row parity picks the bank, the
-            // temporal anim_phase counter picks the sub-frame within
-            // the bank.  This is the only entity that combines both
-            // positional and temporal selection.
-            //
-            // Bank layout (matches the .ans authoring convention and
-            // the flat walk-table emitted by build_sprites7.c):
-            //   frames 0,1,2 = aligned bank    (half-row parity = 0)
-            //   frames 3,4,5 = in-between bank (half-row parity = 1)
-            //
-            // MATH TRICK: instead of maintaining a nested walk table
-            // like [(0,1,2),(3,4,5)] and indexing it as
-            //   walk_table[bank][sub]
-            // we keep the walk table FLAT as [0,1,2,3,4,5] and compute
-            // the walk-table index directly:
-            //
-            //   idx_in_walk_table = bank_base + sub
-            //                     = (half_row_parity * 3) + (anim_phase % 3)
-            //
-            // Why this is equivalent and preferable:
-            //   - The walk table is already a flat C array of frame
-            //     indices; a nested [(0,1,2),(3,4,5)] would require
-            //     either a 2D array (changes the SpriteSet data
-            //     layout, breaks the editor's flat-array editor) or
-            //     arithmetic to find the row offset (which is what
-            //     we're doing here anyway, just at lookup time).
-            //   - The flat layout means the editor's "walk_n: [0,1,2,3,4,5]"
-            //     readout stays readable and the S-key save format
-            //     matches what build_sprites7.c emits.
-            //   - The math collapses to one add and one mod, both
-            //     cheap integer ops; no extra pointer dereference.
-            //
-            // Authoring implication: if you want to reorder frames
-            // within a bank (e.g. ping-pong: 0,2,1,3,5,4), edit the
-            // flat walk table in sprites.h directly -- the picker
-            // doesn't care about the bank's internal order, only that
-            // the first 3 entries belong to bank 0 and the next 3 to
-            // bank 1.  (If you ever want a non-3-sized bank -- e.g.
-            // 2 aligned + 4 in-between -- you'd need to either change
-            // this constant or move to a real nested layout.)
-            (void)spatial_stride;
-            (void)spatial_scale;
-            (void)facing_dir;     /* spheroid is omnidirectional */
-
-            /* Half-row parity selects the bank.  Mirrors the Grunt's
-             * one-shot formula -- see the long comment in the
-             * ENT_GRUNT case for the truncation-dead-zone rationale. */
-            int32_t half_rows = (int32_t)wy * ((int32_t)g_term_rows * 2)            // mirrors Grunt's one-shot half-row formula
-                              / ((int32_t)SCREEN_HEIGHT * COORD_SCALE);
-            if (half_rows < 0) half_rows = 0;
-            int bank = (int)(half_rows & 1);    /* 0 = aligned, 1 = in-between */
-
-            /* Temporal sub-frame within the bank.  anim_phase is
-             * Entity.anim_counter (or a g_frame_count-derived
-             * substitute in the editor preview).  The caller is
-             * responsible for advancing anim_counter at the right
-             * cadence (see SPHEROID_WALK_FRAMES_PER_ADVANCE and the
-             * tick path in update_entities()). */
-            int sub = anim_phase % 3;            // % 3 picks the sub-frame within the bank
-            if (sub < 0) sub += 3;     /* defensive: C's % can be negative */
-
-            int idx = bank * 3 + sub;            // flat walk table trick: idx = bank*3 + sub (no 2D array needed)
-            if (idx < 0 || idx >= count) idx = 0;
-            return idx;
-        }
-        case ENT_PLAYER: {
-            /* HYBRID picker for E/W, pure stride for N/S.
+        case ENT_TANK: {
+            /* Pure stride cycle on all facings.
              *
-             * WALK TABLE LAYOUT (from build_sprites7.c, .ans-tagged):
-             *   walk_w[] = { 6 even-row, 6 odd-row } -- 12 entries
-             *   walk_e[] = { 6 even-row, 6 odd-row } -- 12 entries
-             *   walk_n[] = { 7 mixed even/odd }      -- 7 entries
-             *   walk_s[] = { 7 mixed even/odd }      -- 7 entries
-             *
-             * E/W STRATEGY -- half-row bank + stride sub-frame:
-             *   The artist drew TWO sub-cycles per facing: 6 frames for
-             *   even-row positions (player visual centre at cell boundary)
-             *   and 6 frames for odd-row positions (centre at cell middle).
-             *   Half-row parity picks the bank; a positional stride along
-             *   the X axis cycles through the 6 frames within the bank.
-             *   As the player walks E/W, wy naturally drifts (player
-             *   presses up/down, or half-row parity flips mid-cell), so
-             *   both banks get visited -- giving the full 12-frame cycle.
-             *
-             *   Bank split is count/2 -- works for any even count.  If the
-             *   artist ever changes to a 4+8 split, this formula breaks and
-             *   the picker will need explicit bank metadata.  For now, 6+6.
-             *
-             * N/S STRATEGY -- pure stride cycle:
-             *   The 7 NS frames alternate even/odd in source order
-             *   (heights: 2,3,3,2,2,3,3).  Rather than splitting into
-             *   uneven banks (3 even + 4 odd), we use a pure stride cycle
-             *   through all 7 frames.  The varying canvas heights create a
-             *   natural half-row bobbing effect as the cycle advances.
-             *   Visual position may differ from logical position by up to
-             *   1 half-row (~4 px) -- acceptable for a walk cycle.
-             *
-             * ANIM_PHASE: unused (player has no temporal walk counter).
-             * The frame index is purely positional.  A future revision
-             * could add a temporal component for smoother animation when
-             * the player is stationary (e.g. idle breathing animation).
+             * EH/WH resolution is handled by get_current_frame() before
+             * this function is called (same as Player).  N/S: 2 frames
+             * toggling per half-row step.  E/W/EH/WH: 3 frames each
+             * cycling per full-column step.
              */
             (void)anim_phase;
-
-            if (facing_dir == DIR_UP || facing_dir == DIR_DOWN) {
-                /* N/S: pure stride cycle through all 7 frames. */
-                return stride_cycle(wy, spatial_stride, spatial_scale,
-                                    count, /*axis=*/1);
-            } else {
-                /* E/W: hybrid -- half-row picks bank, stride picks sub. */
-                int32_t half_rows = (int32_t)wy
-                                  * ((int32_t)g_term_rows * 2)
-                                  / ((int32_t)SCREEN_HEIGHT * COORD_SCALE);
-                if (half_rows < 0) half_rows = 0;
-                int bank = (int)(half_rows & 1);  /* 0 = even-row, 1 = odd-row */
-
-                int bank_size = count / 2;  /* 12 / 2 = 6 for E/W */
-                if (bank_size < 1) bank_size = 1;
-
-                int sub = stride_cycle(wx, spatial_stride, spatial_scale,
-                                       bank_size, /*axis=*/0);
-                int idx = bank * bank_size + sub;
-                if (idx < 0 || idx >= count) idx = 0;
-                return idx;
-            }
+            int axis = (facing_dir == DIR_UP || facing_dir == DIR_DOWN) ? 1 : 0;
+            int16_t pos = axis ? wy : wx;
+            return stride_cycle(pos, spatial_stride, spatial_scale, count, axis);
+        }
+            // TODO DESCRIBEIT2
+        case ENT_SPHEROID: {
+            // ── Spheroid: two-level positional picker ──
+            //
+            // CONCEPT: the spheroid has 6 frames arranged in two
+            // "banks" of 3.  Bank 0 (frames 0-1-2) is used when the
+            // sprite sits on an EVEN half-row; bank 1 (frames 3-4-5)
+            // on an ODD half-row.  Within each bank, the sub-frame
+            // cycles through 0,1,2 as the entity moves along its axis
+            // of travel.
+            //
+            // WHY TWO LEVELS?
+            //   The spheroid morphs as it drifts.  The even/odd
+            //   half-row split gives a visible "pop" between aligned
+            //   and in-between positions — the sprite literally
+            //   changes shape depending on whether it landed on a
+            //   whole row or a half row.  This mimics the original
+            //   arcade Robotron spheroid which had a similar
+            //   two-state wobble.
+            //
+            // LEVEL 1 — BANK SELECT (half-row parity):
+            //   We compute the entity's screen row as a "double-
+            //   resolution" value: pretend the terminal has 2× the
+            //   rows, divide the world-Y into that space, and look
+            //   at the low bit.  Even = aligned (bank 0), odd =
+            //   in-between (bank 1).
+            //
+            //   Math:
+            //     raw_pixels_y = wy / COORD_SCALE
+            //     half_rows    = raw_pixels_y * (term_rows * 2) / SCREEN_HEIGHT
+            //     parity       = half_rows & 1
+            //
+            //   This is the same half-row trick the Grunt uses, but
+            //   here we only need the PARITY, not the frame itself.
+            //
+            // LEVEL 2 — SUB-FRAME SELECT (stride_cycle):
+            //   Within the chosen bank, we need frames 0, 1, or 2.
+            //   We use stride_cycle() — the same positional picker
+            //   as Hulk/Human/Tank — so the sub-frame advances
+            //   proportionally to distance travelled.  Moving 3
+            //   cells with stride=2, scale=4 cycles through all
+            //   3 sub-frames; the exact rate is tuneable via the
+            //   editor's +/− keys (scale) and the walk-table step
+            //   period.
+            //
+            // COMBINING:
+            //   frame_in_walk_table = parity * 3 + sub
+            //
+            //   parity  sub  →  frame
+            //   ─────────────────────
+            //     0      0  →    0
+            //     0      1  →    1
+            //     0      2  →    2
+            //     1      0  →    3
+            //     1      1  →    4
+            //     1      2  →    5
+            //
+            // This is purely positional — no temporal counter, no
+            // anim_phase.  The spheroid frame is determined
+            // entirely by where it IS, not how long it's been alive.
+            // Move it and the frame changes; stop and it freezes.
+            //
+            // EDITOR TUNING: +/- adjusts scale_x/scale_y which
+            // controls sub-frame rate.  i/j/k/l adjusts per-frame
+            // ox/oy for visual alignment of small frames.
+            //
+            (void)anim_phase;
+            int axis = (facing_dir == DIR_UP || facing_dir == DIR_DOWN) ? 1 : 0;
+            int16_t pos = axis ? wy : wx;
+            int32_t raw_pixels = (int32_t)wy / COORD_SCALE;
+            int32_t half_rows  = raw_pixels * (g_term_rows * 2) / SCREEN_HEIGHT;
+            if (half_rows < 0) half_rows = 0;
+            int parity = half_rows & 1;
+            int sub = stride_cycle(pos, spatial_stride, spatial_scale, 3, axis);
+            return parity * 3 + sub;
+        }
+        case ENT_PLAYER: {
+            /* Pure stride cycle on all facings.
+             *
+             * EH/WH resolution is handled by get_current_frame() before
+             * this function is called: when facing_dir is DIR_LEFT or
+             * DIR_RIGHT and the entity's facing[4]/facing[5] slots have
+             * frames, get_current_frame checks half-row parity and
+             * remaps to DIR_LEFT_HALF or DIR_RIGHT_HALF.  So by the
+             * time we arrive here, facing_dir is already the final
+             * effective facing index and count/scale come from the
+             * correct EH or WH FacingInfo.  No bank math needed.
+             *
+             * N/S: pure stride through 7 frames (half-row resolution).
+             * E/W or EH/WH: pure stride through 6 frames each
+             *   (full-column resolution for X axis).
+             */
+            (void)anim_phase;
+            int axis = (facing_dir == DIR_UP || facing_dir == DIR_DOWN) ? 1 : 0;
+            int16_t pos = axis ? wy : wx;
+            return stride_cycle(pos, spatial_stride, spatial_scale, count, axis);
+        }
+        case ENT_QUARK: {
+            /* Stride cycle through 3 frames per facing.
+             * EH/WH resolution handled by get_current_frame() before
+             * this call -- odd half-rows remap W->WH, E->EH, swapping
+             * in frames 3-5 instead of 0-2.  Stride then picks which
+             * of the 3 sub-frames to show based on movement distance. */
+            (void)anim_phase;
+            int axis = (facing_dir == DIR_UP || facing_dir == DIR_DOWN) ? 1 : 0;
+            int16_t pos = axis ? wy : wx;
+            return stride_cycle(pos, spatial_stride, spatial_scale, count, axis);
         }
         default:
             // Stubs and unmapped entities -- always frame 0.
@@ -3106,8 +3247,35 @@ static const SpriteFrame* get_current_frame(const SpriteSet* ss, int facing_dir,
                                              int16_t wx, int16_t wy,
                                              EntityType type, int anim_phase) {
     if (!ss || !ss->frames) return NULL;
-    if (facing_dir < 0 || facing_dir > 3) facing_dir = 1;  /* default to S */
-    const FacingInfo* fi = &ss->facing[facing_dir];
+    if (facing_dir < 0 || facing_dir >= 4) facing_dir = 1;  /* default to S */
+
+    /* EH/WH resolution: for entities whose E/W facings have separate
+     * even-row and odd-row walk tables (facing[4]=WH, facing[5]=EH),
+     * resolve the effective facing based on half-row parity of wy.
+     * The base facing_dir is clamped to 0-3 (N/S/W/E); if the
+     * corresponding half-row slot has frames, we use it instead.
+     *
+     * Affected entities: Player, Tank (and future entities whose .ans
+     * tags include Facing: EH and Facing: WH).  All other entities
+     * leave slots 4-5 empty (count=0) and skip this logic.
+     *
+     * The half-row index formula matches the one used by the Grunt
+     * parity picker and stride_cycle Y-axis: one-shot divide from wy. */
+    int effective_facing = facing_dir;
+    if ((facing_dir == DIR_LEFT || facing_dir == DIR_RIGHT) && wy != 0) {
+        int half_fi = (facing_dir == DIR_LEFT) ? DIR_LEFT_HALF : DIR_RIGHT_HALF;
+        if (half_fi >= 0 && half_fi < NUM_FACINGS
+            && ss->facing[half_fi].frame_indices
+            && ss->facing[half_fi].count > 0) {
+            /* Check half-row parity via one-shot divide */
+            int32_t half_rows = (int32_t)wy * ((int32_t)g_term_rows * 2)
+                              / ((int32_t)SCREEN_HEIGHT * COORD_SCALE);
+            if (half_rows >= 0 && (half_rows & 1))
+                effective_facing = half_fi;
+        }
+    }
+
+    const FacingInfo* fi = &ss->facing[effective_facing];
     if (!fi->frame_indices || fi->count <= 0) return NULL;
 
     /* Editor shadow: when the walk-table editor is active for this
@@ -3121,7 +3289,7 @@ static const SpriteFrame* get_current_frame(const SpriteSet* ss, int facing_dir,
     int scale_y = fi->scale_y > 0 ? fi->scale_y : 1;
     if (g_editor_active && type == g_editor_entity
         && type >= 0 && type < NUM_ENTITY_TYPES) {
-        EditorWalk* ew = &g_editor_walks[type][facing_dir];
+        EditorWalk* ew = &g_editor_walks[type][effective_facing];
         if (ew->count > 0) {
             indices = ew->indices;
             count = ew->count;
@@ -3147,11 +3315,11 @@ static const SpriteFrame* get_current_frame(const SpriteSet* ss, int facing_dir,
      * for signature uniformity.  The anim_phase is what the Spheroid
      * actually consumes. */
     int base_stride = fi->step_period;
-    int scale = (facing_dir == DIR_UP || facing_dir == DIR_DOWN)
+    int scale = (effective_facing == DIR_UP || effective_facing == DIR_DOWN)
               ? scale_y : scale_x;
     if (base_stride <= 0) base_stride = 1;  /* defensive; Grunt/Spheroid bypass anyway */
 
-    int idx_in_facing = entity_select_frame(type, wx, wy, facing_dir,
+    int idx_in_facing = entity_select_frame(type, wx, wy, effective_facing,
                                              count, base_stride, scale,
                                              anim_phase);
     if (idx_in_facing < 0 || idx_in_facing >= count) idx_in_facing = 0;
@@ -3170,7 +3338,7 @@ static const SpriteFrame* get_current_frame(const SpriteSet* ss, int facing_dir,
  * to DIR_DOWN as a default). */
 static const FacingInfo* get_facing_info(const SpriteSet* ss, int facing_dir) {
     if (!ss) return NULL;
-    if (facing_dir < 0 || facing_dir > 3) facing_dir = 1;  /* default to S */
+    if (facing_dir < 0 || facing_dir >= NUM_FACINGS) facing_dir = 1;  /* default to S */
     return &ss->facing[facing_dir];
 }
 
@@ -3556,11 +3724,15 @@ static void render_all(void) {
              * the chosen sprite frame lines up with its true row. */
             int tx = (int)((int32_t)e->wx * g_term_cols / ((int32_t)COORD_SCALE * SCREEN_WIDTH));            // integer truncation -- MUST match entity_select_frame's half-row bucketing
             int ty = (int)((int32_t)e->wy * g_term_rows / ((int32_t)COORD_SCALE * SCREEN_HEIGHT));
-            /* Pass e->anim_counter as the temporal phase so the Spheroid
-             * picker can advance its within-bank sub-frame.  Other entity
-             * types ignore the value (see entity_select_frame() -- their
-             * pickers don't read anim_phase). */
-            const SpriteFrame* sf = get_current_frame(e->anim, e->facing_dir, e->wx, e->wy, e->type, e->anim_counter);            // pass e->anim_counter so spheroid's temporal sub-frame advances
+            /* Electrodes are static -- frame chosen at spawn by level,
+             * stored in e->state.  Bypass the walk-table entirely. */
+            const SpriteFrame* sf = NULL;
+            if (e->type == ENT_ELECTRODE && e->anim
+                && e->state >= 0 && e->state < e->anim->total_frames) {
+                sf = &e->anim->frames[e->state];
+            } else {
+                sf = get_current_frame(e->anim, e->facing_dir, e->wx, e->wy, e->type, e->anim_counter);            // pass e->anim_counter so spheroid's temporal sub-frame advances
+            }
             const FacingInfo* fi = get_facing_info(e->anim, e->facing_dir);
             if (fi) { tx += fi->offset_x; ty += fi->offset_y; }
             /* Per-frame placement offset -- SUBTRACTED to land the
@@ -3589,6 +3761,7 @@ static void render_all(void) {
                 case ENT_BRAIN:     cr=180; cg=  0; cb=180; break; /* magenta */
                 case ENT_ELECTRODE: cr=255; cg=165; cb=  0; break; /* yellow-orange */
                 case ENT_CRUISE:    cr=  0; cg=200; cb=200; break; /* cyan */
+                case ENT_TANK:      cr=100; cg=100; cb=100; break; /* dark gray (steel) */
                 case ENT_HUMAN: {
                     static const uint8_t hc[3][3] = {
                         {255,182,193}, /* mommy: pink */
@@ -3717,32 +3890,20 @@ static void play_level_intro_text(void) {
     fflush(stdout);
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+// ============================================================
+//  DEBUG LOG
+// ============================================================
+static void debug_log(const char* fmt, ...) {
+    if (!g_debug_log) return;
+    FILE* f = fopen("./blopotron.log", "a");
+    if (!f) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
 
 // ============================================================
 //  INTRO SCREEN - VT100 Double-Size Wargames Style
@@ -4382,16 +4543,16 @@ static void play_zooming_boxes_text(void) {
  * declarations are defined earlier in the file (near the top, before
  * get_current_frame()) because get_current_frame() needs to see them. */
 
-/* Map EntityType to its SpriteSet* (consults both real and stub sets). */
 /* editor_get_sprite_set -- map EntityType to its SpriteSet*.
  *
- * Returns the address of the static const SpriteSet for the given type
+ * Returns the address of the static SpriteSet for the given type
  * (e.g. &sprite_grunt_set).  Works for both real sprite data (when
  * sprites.h defines HAVE_SPRITE_GRUNT) and stub data (the #ifndef
  * fallbacks earlier in this file).
  *
- * Used by the editor to find the sprite set for preview and editing. */
-static const SpriteSet* editor_get_sprite_set(EntityType type) {
+ * Used by the editor to find the sprite set for preview and editing.
+ * Returns non-const so the editor can mutate per-frame ox/oy. */
+static SpriteSet* editor_get_sprite_set(EntityType type) {
     switch (type) {
         case ENT_PLAYER:    return &sprite_player_set;
         case ENT_GRUNT:     return &sprite_grunt_set;
@@ -4408,6 +4569,7 @@ static const SpriteSet* editor_get_sprite_set(EntityType type) {
         case ENT_TERROR:    return &sprite_terror_set;
         case ENT_ELECTRODE: return &sprite_electrode_set;
         case ENT_CRUISE:    return &sprite_cruise_set;
+        case ENT_TANK:      return &sprite_tank_set;
         default:            return NULL;
     }
 }
@@ -4438,6 +4600,7 @@ static const char* editor_entity_prefix(EntityType type) {
         case ENT_TERROR:    return "terror";
         case ENT_ELECTRODE: return "electrode";
         case ENT_CRUISE:    return "cruise";
+        case ENT_TANK:      return "tank";
         default:            return NULL;
     }
 }
@@ -4468,6 +4631,7 @@ static const char* editor_entity_label(EntityType type) {
         case ENT_TERROR:    return "Terror";
         case ENT_ELECTRODE: return "Electrode";
         case ENT_CRUISE:    return "Cruise";
+        case ENT_TANK:      return "Tank";
         default:            return "?";
     }
 }
@@ -4505,51 +4669,27 @@ static const char* editor_entity_prefix(EntityType type);
 static const EntityType g_editor_entities[] = {
     ENT_PLAYER, ENT_GRUNT, ENT_QUARK, ENT_HULK, ENT_BRAIN,
     ENT_SPHEROID, ENT_ENFORCER, ENT_HUMAN, ENT_LASER, ENT_TERROR,
-    ENT_ELECTRODE, ENT_CRUISE
+    ENT_ELECTRODE, ENT_CRUISE, ENT_TANK
 };
 
-/* Initialize shadow walk tables + scale values.
- * Walk indices come from the compiled-in const SpriteSet (these are
- * not expected to drift between compiles -- if they do, btk rebuilds).
- * Scale values, however, are read fresh from sprites.h on each editor
- * entry so that values saved by a previous `btk -e` session survive
- * even if btk hasn't been recompiled since the save.  If sprites.h
- * can't be opened or doesn't contain scale values for this entity,
- * falls back to the compiled-in const values (default 1,1). */
-/* editor_init_shadow -- load the editor's mutable shadow tables for the
+/* editor_init_shadow -- load the editor's mutable walk tables for the
  * given entity type.
  *
- * Two passes:
+ * Seeds each EditorWalk from the compiled-in FacingInfo, then opens
+ * sprites.h and parses scale_x/scale_y from the saved-on-disk values
+ * (so that a previous editor session's tuning survives re-entry even
+ * without a recompile).
  *
- *   1. WALK TABLES + SCALE VALUES:
- *      - Seeds each EditorWalk from the compiled-in FacingInfo (so the
- *        shadow starts as a copy of the const data).
- *      - Then opens sprites.h and parses the last two comma-separated
- *        integers from each "<prefix>_walk_<dir>" line, overwriting the
- *        shadow scale_x/scale_y with the saved-on-disk values.  This
- *        lets the user re-enter the editor and see their last saved
- *        tuning even if btk hasn't been recompiled since the save.
- *
- *   2. PER-FRAME ox/oy OFFSETS:
- *      - Seeds each EditorFrameOffset from the compiled-in SpriteFrame.
- *      - Then parses "<prefix>_f<N> = { ... }" lines from sprites.h,
- *        extracting the last two integers (ox, oy) and overwriting the
- *        shadow.  Same rationale: saved edits survive re-entry without
- *        a recompile.
- *
- * PARSING STRATEGY: rather than a full C initializer parser, we walk
- * backward from the closing '}' to find the last two comma-separated
- * integers.  This is fragile (assumes the initializer has at least 2
- * numeric fields before the '}') but works for our specific
- * FacingInfo/SpriteFrame layouts.  If we ever add trailing non-numeric
- * fields, this parser will need to be smarter. */
+ * Per-frame ox/oy offsets live directly on the non-const SpriteFrame
+ * (no shadow).  If sprites.h has been hand-edited, recompile to pick
+ * up the new ox/oy values. */
 static void editor_init_shadow(EntityType type) {
-    const SpriteSet* ss = editor_get_sprite_set(type);
+    SpriteSet* ss = editor_get_sprite_set(type);
     if (!ss) return;
     const char* prefix = editor_entity_prefix(type);
 
     /* Load current scale values from sprites.h (best-effort). */
-    int file_sx[4] = {0,0,0,0}, file_sy[4] = {0,0,0,0};
+    int file_sx[NUM_FACINGS] = {0}, file_sy[NUM_FACINGS] = {0};
     bool found_in_file = false;
     if (prefix) {
         FILE* f = fopen(SPRITES_H_FILENAME, "r");
@@ -4561,11 +4701,18 @@ static void editor_init_shadow(EntityType type) {
                 char* hit = strstr(line, wpat);
                 if (!hit) continue;
                 char d = *(hit + strlen(wpat));
+                char d2 = *(hit + strlen(wpat) + 1);  /* for wh/eh */
                 int fidx = -1;
                 if (d == 'n' || d == 'N') fidx = 0;
                 else if (d == 's' || d == 'S') fidx = 1;
-                else if (d == 'e' || d == 'E') fidx = 2;
-                else if (d == 'w' || d == 'W') fidx = 3;
+                else if (d == 'w' || d == 'W') {
+                    if (d2 == 'h' || d2 == 'H') fidx = DIR_LEFT_HALF;
+                    else fidx = DIR_LEFT;
+                }
+                else if (d == 'e' || d == 'E') {
+                    if (d2 == 'h' || d2 == 'H') fidx = DIR_RIGHT_HALF;
+                    else fidx = DIR_RIGHT;
+                }
                 if (fidx < 0) continue;
                 /* Find the closing } and walk backward to extract
                  * the last two comma-separated integers (sx, sy). */
@@ -4599,7 +4746,7 @@ static void editor_init_shadow(EntityType type) {
         }
     }
 
-    for (int f = 0; f < 4; f++) {
+    for (int f = 0; f < NUM_FACINGS; f++) {
         const FacingInfo* fi = &ss->facing[f];
         EditorWalk* ew = &g_editor_walks[type][f];
         int n = fi->count;
@@ -4617,69 +4764,6 @@ static void editor_init_shadow(EntityType type) {
             ew->scale_y = fi->scale_y > 0 ? fi->scale_y : 1;
         }
         ew->dirty = false;
-    }
-
-    /* Per-frame ox/oy shadow init: seed from compiled-in SpriteFrame
-     * values, then overwrite with values parsed from sprites.h if
-     * present (so saved-but-not-recompiled edits survive re-entry). */
-    for (int i = 0; i < EDITOR_MAX_FRAMES; i++) {
-        if (i < ss->total_frames) {
-            g_editor_frame_offsets[type][i].ox = ss->frames[i].ox;
-            g_editor_frame_offsets[type][i].oy = ss->frames[i].oy;
-        } else {
-            g_editor_frame_offsets[type][i].ox = 0;
-            g_editor_frame_offsets[type][i].oy = 0;
-        }
-        g_editor_frame_offsets[type][i].dirty = false;
-    }
-    if (prefix) {
-        FILE* f2 = fopen(SPRITES_H_FILENAME, "r");
-        if (f2) {
-            char line2[1024];
-            char fpat[64];
-            snprintf(fpat, sizeof(fpat),
-                     "static const SpriteFrame %s_f", prefix);
-            size_t fpatlen = strlen(fpat);
-            while (fgets(line2, sizeof(line2), f2)) {
-                if (strncmp(line2, fpat, fpatlen) != 0) continue;
-                /* Parse frame index N from "<prefix>_fN = {" */
-                char* p = line2 + fpatlen;
-                if (*p < '0' || *p > '9') continue;
-                int fidx = 0;
-                while (*p >= '0' && *p <= '9') {
-                    fidx = fidx * 10 + (*p - '0');
-                    p++;
-                }
-                if (fidx < 0 || fidx >= EDITOR_MAX_FRAMES) continue;
-                /* Find closing '}' and walk backward to extract last
-                 * two comma-separated integers (ox, oy). */
-                char* close = strchr(line2, '}');
-                if (!close) continue;
-                char* c = close - 1;
-                int vals[2] = {0, 0};
-                int vi = 1;
-                bool ok = true;
-                while (c > line2 && vi >= 0) {
-                    if (*c == ',') {
-                        char* np = c + 1;
-                        while (*np == ' ' || *np == '\t') np++;
-                        if (*np < '0' || *np > '9') { ok = false; break; }
-                        int v = 0;
-                        while (*np >= '0' && *np <= '9') {
-                            v = v * 10 + (*np - '0'); np++;
-                        }
-                        vals[vi] = v;
-                        vi--;
-                    }
-                    c--;
-                }
-                if (ok) {
-                    g_editor_frame_offsets[type][fidx].ox = vals[0];
-                    g_editor_frame_offsets[type][fidx].oy = vals[1];
-                }
-            }
-            fclose(f2);
-        }
     }
 }
 
@@ -4753,6 +4837,17 @@ static void editor_blit_str(int row, int col, const char* s,
             cell->br = 0; cell->bg = 0; cell->bb = 0;
         }
     }
+}
+
+/* editor_set_bg -- paint a single cell's background to (br,bg,bb).
+ * Glyph is set to space; fg is zeroed.  Used for thumbnail borders. */
+static void editor_set_bg(int row, int col, uint8_t br, uint8_t bg, uint8_t bb) {
+    if (!text_buffer || row < 0 || row >= g_term_rows) return;
+    if (col < 0 || col >= g_term_cols) return;
+    TextCell* cell = &text_buffer[row * g_term_cols + col];
+    cell->glyph[0] = ' '; cell->glyph[1] = '\0';
+    cell->r = cell->g = cell->b = 0;
+    cell->br = br; cell->bg = bg; cell->bb = bb;
 }
 
 /* ---------- walk-table string editor ---------- */
@@ -4836,13 +4931,23 @@ static bool editor_parse_walk_string(const char* s, int frame_count,
 static bool editor_save_sprites_h(EntityType type) {
     const char* prefix = editor_entity_prefix(type);
     if (!prefix) return false;
+    SpriteSet* ss = editor_get_sprite_set(type);
 
-    /* 1. Rename sprites.h -> sprites.h.bak (overwrite existing .bak). */
+    /* 1. Explicit copy: sprites.h -> sprites.h.bak (preserves original
+     * even if the rename/write below fails). */
     FILE* probe = fopen(SPRITES_H_FILENAME, "r");
     if (!probe) return false;
     fclose(probe);
-    if (rename(SPRITES_H_FILENAME, SPRITES_H_FILENAME ".bak") != 0) {
-        /* rename failed -- try to continue by reopening as read */
+    {
+        FILE* src = fopen(SPRITES_H_FILENAME, "r");
+        FILE* dst = fopen(SPRITES_H_FILENAME ".bak", "w");
+        if (!src || !dst) { if (src) fclose(src); if (dst) fclose(dst); return false; }
+        char copybuf[4096];
+        size_t n;
+        while ((n = fread(copybuf, 1, sizeof(copybuf), src)) > 0)
+            fwrite(copybuf, 1, n, dst);
+        fclose(src);
+        fclose(dst);
     }
 
     FILE* in  = fopen(SPRITES_H_FILENAME ".bak", "r");
@@ -4853,6 +4958,8 @@ static bool editor_save_sprites_h(EntityType type) {
     char line[1024];
     bool  in_walk_block = false;
     char  walk_dir = 0;
+    bool  in_frame_array = false;   /* inside <prefix>_frames[] array */
+    int   frame_array_idx = 0;      /* current frame index within array */
 
     while (fgets(line, sizeof(line), in)) {
         if (in_walk_block) {
@@ -4873,7 +4980,9 @@ static bool editor_save_sprites_h(EntityType type) {
         if (strncmp(line, pattern, plen) == 0) {
             /* Extract direction letter */
             char* p = line + plen;
-            walk_dir = *p;   /* e.g. 'n' */
+            /* Extract direction — may be 1 char (n/s/e/w) or 2 (wh/eh) */
+            walk_dir = *p;   /* e.g. 'n' or 'w' */
+            char wd2 = *(p + 1);  /* second char for 'wh'/'eh' */
             in_walk_block = true;
 
             /* Build the new array */
@@ -4881,11 +4990,22 @@ static bool editor_save_sprites_h(EntityType type) {
             switch (walk_dir) {
                 case 'n': case 'N': ew = &g_editor_walks[type][0]; break;
                 case 's': case 'S': ew = &g_editor_walks[type][1]; break;
-                case 'e': case 'E': ew = &g_editor_walks[type][2]; break;
-                case 'w': case 'W': ew = &g_editor_walks[type][3]; break;
+                case 'w': case 'W':
+                    if (wd2 == 'h' || wd2 == 'H') ew = &g_editor_walks[type][DIR_LEFT_HALF];
+                    else ew = &g_editor_walks[type][DIR_LEFT];
+                    break;
+                case 'e': case 'E':
+                    if (wd2 == 'h' || wd2 == 'H') ew = &g_editor_walks[type][DIR_RIGHT_HALF];
+                    else ew = &g_editor_walks[type][DIR_RIGHT];
+                    break;
             }
-            fprintf(out, "static const int %s_walk_%c[] = {\n",
-                    prefix, walk_dir);
+            /* Emit array header with correct direction name (1 or 2 chars) */
+            if (wd2 == 'h' || wd2 == 'H')
+                fprintf(out, "static const int %s_walk_%c%c[] = {\n",
+                        prefix, walk_dir, wd2);
+            else
+                fprintf(out, "static const int %s_walk_%c[] = {\n",
+                        prefix, walk_dir);
             if (ew && ew->count > 0) {
                 fprintf(out, "    ");
                 for (int i = 0; i < ew->count; i++) {
@@ -4914,11 +5034,18 @@ static bool editor_save_sprites_h(EntityType type) {
             if (hit) {
                 char* dirp = hit + strlen(wpat);
                 char d = *dirp;
+                char d2 = *(dirp + 1);  /* second char for "wh"/"eh" */
                 int fidx = -1;
                 if (d == 'n' || d == 'N') fidx = 0;
                 else if (d == 's' || d == 'S') fidx = 1;
-                else if (d == 'e' || d == 'E') fidx = 2;
-                else if (d == 'w' || d == 'W') fidx = 3;
+                else if (d == 'w' || d == 'W') {
+                    if (d2 == 'h' || d2 == 'H') fidx = DIR_LEFT_HALF;   /* wh → WH */
+                    else fidx = DIR_LEFT;                                  /* w  → W  */
+                }
+                else if (d == 'e' || d == 'E') {
+                    if (d2 == 'h' || d2 == 'H') fidx = DIR_RIGHT_HALF;  /* eh → EH */
+                    else fidx = DIR_RIGHT;                                 /* e  → E  */
+                }
                 if (fidx >= 0) {
                     EditorWalk* ew = &g_editor_walks[type][fidx];
                     int sx = ew->scale_x > 0 ? ew->scale_x : 1;
@@ -4991,57 +5118,87 @@ static bool editor_save_sprites_h(EntityType type) {
             }
         }
 
-        /* Detect SpriteFrame initializer lines and rewrite the ox/oy
-         * fields (the last two integers before '}') if the shadow has
-         * a dirty override for that frame.  Line shape:
+        /* Detect SpriteFrame array and rewrite per-entry ox/oy.
          *
-         *   static const SpriteFrame <prefix>_f<N> = { <rows>, <w>, <h>, <ox>, <oy> };
+         * sprites.h uses an array-of-structs layout:
+         *   static SpriteFrame <prefix>_frames[] = {
+         *       { <prefix>_f0_rows, <w>, <h>, <ox>, <oy> },
+         *       ...
+         *   };
          *
-         * We parse N from the identifier, then truncate at the comma
-         * preceding oy and append our new ox, oy values. */
+         * We track entry index by counting '{' characters inside the
+         * array.  For each entry line, we replace the last two ints
+         * before '}' with the in-memory ox, oy values. */
         {
-            char fpat[64];
-            snprintf(fpat, sizeof(fpat),
-                     "static const SpriteFrame %s_f", prefix);
-            size_t fpatlen = strlen(fpat);
-            if (strncmp(line, fpat, fpatlen) == 0) {
-                char* p = line + fpatlen;
-                if (*p >= '0' && *p <= '9') {
-                    int fidx = 0;
-                    while (*p >= '0' && *p <= '9') {
-                        fidx = fidx * 10 + (*p - '0');
-                        p++;
-                    }
-                    if (fidx >= 0 && fidx < EDITOR_MAX_FRAMES
-                        && g_editor_frame_offsets[type][fidx].dirty) {
-                        EditorFrameOffset* efo =
-                            &g_editor_frame_offsets[type][fidx];
-                        char* close = strchr(line, '}');
-                        if (close) {
-                            /* Walk backward from close to find the comma
-                             * that precedes the ox field (the 4th comma
-                             * from the start of the initializer). */
-                            int comma_count = 0;
-                            char* trunc_pos = NULL;
-                            for (char* c = line; c < close; c++) {
-                                if (*c == ',') {
-                                    comma_count++;
-                                    if (comma_count == 4) {
-                                        trunc_pos = c;
-                                        break;
+            /* Check for the array header line to activate tracking. */
+            if (!in_frame_array) {
+                char apat[80];
+                snprintf(apat, sizeof(apat),
+                         "static SpriteFrame %s_frames[]", prefix);
+                size_t apatlen = strlen(apat);
+                if (strncmp(line, apat, apatlen) == 0) {
+                    in_frame_array = true;
+                    frame_array_idx = 0;
+                    fputs(line, out);
+                    continue;
+                }
+            }
+
+            if (in_frame_array) {
+                /* End of array? */
+                if (strstr(line, "};")) {
+                    in_frame_array = false;
+                    fputs(line, out);
+                    continue;
+                }
+                /* Count '{' on this line to identify frame entries.
+                 * Each line is typically one entry:  { rows, w, h, ox, oy }, */
+                bool frame_written = false;
+                for (char* c = line; *c; c++) {
+                    if (*c == '{') {
+                        int fidx = frame_array_idx;
+                        if (ss && fidx >= 0 && fidx < ss->total_frames) {
+                            int ox = ss->frames[fidx].ox;
+                            int oy = ss->frames[fidx].oy;
+                            char* close = strchr(c, '}');
+                            if (close) {
+                                /* Find the 3rd comma from '{' — that
+                                 * separates h from ox.  Truncate there
+                                 * and append new ox, oy.
+                                 *
+                                 * Format: { rows, w, h, ox, oy }
+                                 * commas:  1      2  3  4
+                                 * Comma 3 is after h, before ox. */
+                                int comma_count = 0;
+                                char* trunc_pos = NULL;
+                                for (char* cc = c; cc < close; cc++) {
+                                    if (*cc == ',') {
+                                        comma_count++;
+                                        if (comma_count == 3) {
+                                            trunc_pos = cc;
+                                            break;
+                                        }
                                     }
                                 }
-                            }
-                            if (trunc_pos) {
-                                *trunc_pos = '\0';
-                                fprintf(out, "%s, %d, %d }%s",
-                                        line, efo->ox, efo->oy,
-                                        close + 1);
-                                continue;
+                                if (trunc_pos) {
+                                    /* We must NOT modify 'line' in place,
+                                     * because fputs(line, out) below would
+                                     * emit the truncated buffer.  Instead,
+                                     * build the output from substrings. */
+                                    /* Everything from line start to trunc_pos */
+                                    fwrite(line, 1, trunc_pos - line, out);
+                                    fprintf(out, ", %d, %d }%s",
+                                            ox, oy, close + 1);
+                                    frame_array_idx++;
+                                    frame_written = true;
+                                }
                             }
                         }
+                        frame_array_idx++;
+                        break;  /* one entry per line */
                     }
                 }
+                if (frame_written) continue; /* skip fputs below */
             }
         }
 
@@ -5051,6 +5208,58 @@ static bool editor_save_sprites_h(EntityType type) {
 
     fclose(in);
     fclose(out);
+
+    /* 3. Post-save verification and change logging.
+     * Diff sprites.h vs .bak; log changes to blopotron.log. */
+    {
+        /* Log changed per-frame ox/oy values to blopotron.log. */
+        FILE* logfile = fopen("blopotron.log", "a");
+        if (logfile && ss) {
+            fprintf(logfile, "[save %s] frame ox/oy:\n", prefix);
+            for (int fi = 0; fi < ss->total_frames && fi < 64; fi++) {
+                fprintf(logfile, "  f%d: ox=%d oy=%d\n",
+                        fi, ss->frames[fi].ox, ss->frames[fi].oy);
+            }
+            for (int fg = 0; fg < 4; fg++) {
+                EditorWalk* ew = &g_editor_walks[type][fg];
+                const char* dlabel = (fg == 0) ? "N" : (fg == 1) ? "S"
+                                     : (fg == 2) ? "W" : "E";
+                fprintf(logfile, "  walk_%s: [", dlabel);
+                for (int j = 0; j < ew->count; j++)
+                    fprintf(logfile, "%s%d", j ? "," : "", ew->indices[j]);
+                fprintf(logfile, "] scale_x=%d scale_y=%d\n",
+                        ew->scale_x, ew->scale_y);
+            }
+            fclose(logfile);
+        }
+
+        /* Run system diff to verify something actually changed. */
+        int diff_ret = system("diff " SPRITES_H_FILENAME " " SPRITES_H_FILENAME ".bak >/dev/null 2>&1");
+        if (diff_ret == 0) {
+            /* Files are identical — save produced no changes! */
+            fprintf(stderr, "[editor_save_sprites_h] WARNING: save produced no changes for %s!\n", prefix);
+            if (ss) {
+                fprintf(stderr, "  Per-frame ox/oy:\n");
+                for (int fi = 0; fi < ss->total_frames && fi < 32; fi++) {
+                    fprintf(stderr, "    f%d: ox=%d oy=%d\n",
+                            fi, ss->frames[fi].ox, ss->frames[fi].oy);
+                }
+            }
+            /* Restore backup so user isn't misled. */
+            {
+                FILE* src = fopen(SPRITES_H_FILENAME ".bak", "r");
+                FILE* dst = fopen(SPRITES_H_FILENAME, "w");
+                if (src && dst) {
+                    char rb[4096]; size_t n;
+                    while ((n = fread(rb, 1, sizeof(rb), src)) > 0)
+                        fwrite(rb, 1, n, dst);
+                    fclose(src); fclose(dst);
+                }
+            }
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -5133,7 +5342,7 @@ static void editor_render_selector(void) {
         EntityType et = (i < G_EDITOR_ENTITY_COUNT)
                       ? g_editor_entities[i]
                       : ENT_PLAYER;  /* unused for empty cells */
-        const SpriteSet* ss = (i < G_EDITOR_ENTITY_COUNT)
+        SpriteSet* ss = (i < G_EDITOR_ENTITY_COUNT)
                             ? editor_get_sprite_set(et)
                             : NULL;
 
@@ -5237,29 +5446,22 @@ static int editor_view_selector(void) {
  *
  * Four sections:
  *
- *   1. ARENA (full screen): the live sprite at (wx, wy) with the active
- *      facing.  Position is computed by integer truncation (same as
- *      render_all()), and per-facing offset_x/y + per-frame ox/oy are
- *      applied.  The ox/oy values come from the shadow when the editor
- *      is active, so i/j/k/l edits take effect immediately.
+ *   1. ARENA (right of thumbnails): the live sprite at (wx, wy) with the
+ *      active facing.  Position is offset rightward by the thumbnail grid
+ *      width so it renders in the remaining playfield space.
  *
- *      For SPHEROID, we synthesize an anim_phase from g_frame_count so
- *      the within-bank sub-frame cycles while you're tuning offsets
- *      (without this, the spheroid would render a static frame in the
- *      editor, hiding three of its six walk frames from preview).
+ *   2. HUD (right of thumbnails, top-down): entity name, facing, wx/wy,
+ *      screen row/col, step/frame index, per-frame ox/oy, per-axis scale,
+ *      full walk array with current step highlighted, help line.
  *
- *   2. HUD (top-left): entity name, facing, wx/wy, screen row/col
- *      (with half-row fractional indicator), current step + frame_idx,
- *      per-frame ox/oy, per-axis scale values, full walk array with
- *      the current step highlighted (">"), help line.
- *
- *   3. THUMBNAIL GRID (right side): 3 columns x N rows of all frames
- *      in the SpriteSet, with the currently displayed one highlighted
- *      (green text on inverted bg).
+ *   3. THUMBNAIL GRID (left side, priority): all frames in a grid with
+ *      grey full-block borders.  Cell size = (max_fw+2) x (max_fh+3).
+ *      As many columns as fit (leaving 20 cols for playfield), then down.
+ *      The active frame_idx has a green inverted label.
  *
  *   4. EDIT STRING (bottom): if edit_active, shows the CSV walk-table
- *      string being typed with a cursor; otherwise shows the "Press
- *      Enter to edit" prompt.
+ *      string being typed with a cursor; otherwise shows the save
+ *      confirmation or the "Press Enter to edit" prompt.
  *
  * DUPLICATE MATH NOTE: the step_idx computation appears THREE times in
  * this function (once for the render path, once for the HUD's "step N/M"
@@ -5272,19 +5474,45 @@ static int editor_view_selector(void) {
 static void editor_render_walktable(int16_t wx, int16_t wy, int facing,
                                     const char* edit_str, int edit_cursor,
                                     bool edit_active, bool edit_error) {
-    const SpriteSet* ss = editor_get_sprite_set(g_editor_entity);
+    SpriteSet* ss = editor_get_sprite_set(g_editor_entity);
     if (!ss) return;
 
     clear_text_buffer();
 
-    /* 1. Arena = full screen.  Live sprite at wx,wy. */
-    int tx = (int)((int32_t)wx * g_term_cols /
+    /* --- Pre-compute thumbnail grid layout (left side, priority) ---
+     * The grid takes as many columns as fit (leaving playfield_min cols
+     * for the live sprite).  All subsequent rendering offsets rightward
+     * by thumb_grid_w to avoid overlapping the thumbnails. */
+    int max_fw = 1, max_fh = 1;
+    for (int i = 0; i < ss->total_frames; i++) {
+        const SpriteFrame* f = &ss->frames[i];
+        if (f) {
+            if (f->w > max_fw) max_fw = f->w;
+            if (f->h > max_fh) max_fh = f->h;
+        }
+    }
+    int cell_w = max_fw + 2;       /* 1 border each side */
+    int cell_h = max_fh + 3;       /* label + top border + sprite rows + bottom border */
+    int playfield_min = 40;        /* need at least 40 cols for live preview */
+    int avail_cols = g_term_cols - playfield_min;
+    if (avail_cols < cell_w) avail_cols = g_term_cols;
+    int thumb_cols_count = avail_cols / cell_w;
+    if (thumb_cols_count < 1) thumb_cols_count = 1;
+    int thumb_grid_w = thumb_cols_count * cell_w;
+
+    /* 1. Arena = right of thumbnails.  Live sprite at wx,wy.
+     * Position is computed relative to the playfield area (right of
+     * thumb_grid_w), not the full terminal width. */
+    int playfield_w = g_term_cols - thumb_grid_w;
+    if (playfield_w < 10) playfield_w = 10;
+    int tx = (int)((int32_t)wx * playfield_w /
                    ((int32_t)COORD_SCALE * SCREEN_WIDTH));
     int ty = (int)((int32_t)wy * g_term_rows /
                    ((int32_t)COORD_SCALE * SCREEN_HEIGHT));
+    /* Shift arena into the playfield area (right of thumbnail grid) */
+    tx += thumb_grid_w;
 
-    /* Use the universal frame lookup (which consults the shadow when
-     * g_editor_active is true).
+    /* Use the universal frame lookup.
      *
      * For the Spheroid we need a temporal anim_phase input -- but the
      * editor preview doesn't have a real Entity* (the sprite is just
@@ -5297,18 +5525,23 @@ static void editor_render_walktable(int16_t wx, int16_t wy, int facing,
      * advances at the same cadence as it would in gameplay (assuming
      * tick_period=1 here -- in real gameplay tick_period=2 means the
      * spheroid ticks every 2nd frame, but in the editor we want
-     * visible motion at full speed so we use 1).  The modulo by 3
-     * mirrors what entity_select_frame()'s ENT_SPHEROID case does. */
+     * visible motion at full speed so we use 1). */
     int editor_anim_phase = 0;
     if (g_editor_entity == ENT_SPHEROID) {
-        editor_anim_phase = (g_frame_count / SPHEROID_WALK_FRAMES_PER_ADVANCE) % 3;        // synthesize anim_phase from g_frame_count so spheroid cycles in editor preview
+        /* Spheroid uses stride_cycle (positional) in entity_select_frame(),
+         * not anim_phase.  But the editor calls get_current_frame() which
+         * internally calls entity_select_frame() -- so we pass 0 here;
+         * the positional math inside entity_select_frame handles it.
+         * We keep the anim_phase computed for the HUD step_idx below,
+         * which still needs a temporal component for the sub-frame display. */
+        editor_anim_phase = (g_frame_count / SPHEROID_WALK_FRAMES_PER_ADVANCE) % 3;
     }
     const SpriteFrame* sf = get_current_frame(ss, facing, wx, wy,
                                               (EntityType)g_editor_entity,
                                               editor_anim_phase);
 
     /* Compute the current frame_idx early so the live preview and the
-     * HUD agree on which frame's ox/oy shadow entry to consult.  This
+     * HUD agree on which frame's ox/oy to consult.  This
      * duplicates a small slice of the HUD's step_idx/frame_idx math
      * below, but keeps the render path self-contained. */
     int frame_idx = 0;
@@ -5329,16 +5562,20 @@ static void editor_render_walktable(int16_t wx, int16_t wy, int facing,
                 /* Half-row parity picker (2-frame toggle). */
                 step_idx = (int)(half_rows & 1);
             } else if (g_editor_entity == ENT_SPHEROID) {
-                /* Spheroid hybrid picker -- must mirror
-                 * entity_select_frame()'s ENT_SPHEROID case exactly
-                 * so the HUD's "step N/M -> frame_idx K" readout
-                 * matches the live blit.  Bank from half-row parity,
-                 * sub-frame from the same g_frame_count-derived
-                 * anim_phase we passed to get_current_frame() above. */
-                int bank = (int)(half_rows & 1);
-                int sub  = editor_anim_phase % 3;
-                if (sub < 0) sub += 3;
-                step_idx = bank * 3 + sub;
+                /* Spheroid positional picker -- mirrors
+                 * entity_select_frame()'s ENT_SPHEROID case exactly.
+                 * Bank from half-row parity, sub-frame from stride_cycle
+                 * along the movement axis.  Purely positional, no
+                 * temporal component -- matches gameplay behavior. */
+                int parity = (int)(half_rows & 1);
+                int axis = (facing == DIR_UP || facing == DIR_DOWN) ? 1 : 0;
+                int16_t pos = axis ? wy : wx;
+                int base_stride = ss->facing[facing].step_period;
+                int scale = (facing == DIR_UP || facing == DIR_DOWN)
+                          ? ew->scale_y : ew->scale_x;
+                if (base_stride <= 0) base_stride = 1;
+                int sub = stride_cycle(pos, base_stride, scale, 3, axis);
+                step_idx = parity * 3 + sub;
             } else {
                 /* Default: stride cycle along axis (Hulk etc.). */
                 int base_stride = ss->facing[facing].step_period;
@@ -5358,23 +5595,11 @@ static void editor_render_walktable(int16_t wx, int16_t wy, int facing,
     if (sf) {
         const FacingInfo* fi = get_facing_info(ss, facing);
         if (fi) { tx += fi->offset_x; ty += fi->offset_y; }
-        /* Per-frame placement offset.  When the editor is active,
-         * consult the shadow so live i/j/k/l edits take effect
-         * immediately.  Mirrors the in-game render path (which
-         * uses sf->ox/sf->oy directly, since the editor is not
-         * active during gameplay).  SUBTRACTED to land the hotspot
-         * cell on the entity's position -- see the matching comment
-         * in the player render path in render_all() for the full
-         * rationale and bug history. */
+        /* Per-frame placement offset.  i/j/k/l modifies sf->ox/sf->oy
+         * directly on the non-const SpriteFrame, so the editor and the
+         * game both read the same values.  SUBTRACTED to land the
+         * hotspot cell on the entity's position. */
         int ox = sf->ox, oy = sf->oy;
-        if (g_editor_active
-            && g_editor_entity >= 0 && g_editor_entity < NUM_ENTITY_TYPES
-            && frame_idx >= 0 && frame_idx < EDITOR_MAX_FRAMES) {
-            EditorFrameOffset* efo =
-                &g_editor_frame_offsets[g_editor_entity][frame_idx];
-            ox = efo->ox;
-            oy = efo->oy;
-        }
         tx -= ox; ty -= oy;
         render_sprite_frame(sf, tx, ty);
     }
@@ -5382,10 +5607,12 @@ static void editor_render_walktable(int16_t wx, int16_t wy, int facing,
     /* 2. HUD (top-left) */
     const char* face_label = "?";
     switch (facing) {
-        case DIR_UP:    face_label = "N"; break;
-        case DIR_DOWN:  face_label = "S"; break;
-        case DIR_LEFT:  face_label = "W"; break;
-        case DIR_RIGHT: face_label = "E"; break;
+        case DIR_UP:         face_label = "N"; break;
+        case DIR_DOWN:       face_label = "S"; break;
+        case DIR_LEFT:       face_label = "W"; break;
+        case DIR_RIGHT:      face_label = "E"; break;
+        case DIR_LEFT_HALF:  face_label = "WH"; break;
+        case DIR_RIGHT_HALF: face_label = "EH"; break;
     }
 
     char buf[128];
@@ -5393,10 +5620,10 @@ static void editor_render_walktable(int16_t wx, int16_t wy, int facing,
 
     snprintf(buf, sizeof(buf), "Entity: %s   Facing: %s",
              editor_entity_label(g_editor_entity), face_label);
-    editor_blit_str(row++, 0, buf, 255, 255, 0, false);
+    editor_blit_str(row++, thumb_grid_w, buf, 255, 255, 0, false);
 
     snprintf(buf, sizeof(buf), "wx=%d  wy=%d", (int)wx, (int)wy);
-    editor_blit_str(row++, 0, buf, 200, 200, 200, false);
+    editor_blit_str(row++, thumb_grid_w, buf, 200, 200, 200, false);
 
     /* Compute screen row/col + fractional half-row indicator.
      * Half-row math in one shot from wy (see entity_select_frame()
@@ -5414,12 +5641,12 @@ static void editor_render_walktable(int16_t wx, int16_t wy, int facing,
     int32_t cols = raw_pixels_x * g_term_cols / SCREEN_WIDTH;
     snprintf(buf, sizeof(buf), "screen: row=%d%s  col=%d",
              whole_row, frac ? "+1/2" : "   ", (int)cols);
-    editor_blit_str(row++, 0, buf, 200, 200, 200, false);
+    editor_blit_str(row++, thumb_grid_w, buf, 200, 200, 200, false);
 
     /* Current step + frame index -- frame_idx is computed above (in
      * the render section) so the live preview and HUD agree on which
-     * frame's ox/oy shadow entry is active.  We still recompute
-     * step_idx here for the walk-array highlight below. */
+     * frame is active.  We still recompute step_idx here for the
+     * walk-array highlight below. */
     EditorWalk* ew = &g_editor_walks[g_editor_entity][facing];
     int step_idx = 0;
     if (ew->count > 0) {
@@ -5433,14 +5660,16 @@ static void editor_render_walktable(int16_t wx, int16_t wy, int facing,
             || g_editor_entity == ENT_ENFORCER) {
             step_idx = (int)(half_rows & 1);
         } else if (g_editor_entity == ENT_SPHEROID) {
-            /* Hybrid: bank from half-row parity, sub from the same
-             * g_frame_count-derived phase used in the render path.
-             * See the matching block in the render path above for
-             * the full rationale. */
-            int bank = (int)(half_rows & 1);
-            int sub  = editor_anim_phase % 3;
-            if (sub < 0) sub += 3;
-            step_idx = bank * 3 + sub;
+            /* Positional picker -- mirrors entity_select_frame(). */
+            int parity = (int)(half_rows & 1);
+            int axis = (facing == DIR_UP || facing == DIR_DOWN) ? 1 : 0;
+            int16_t pos = axis ? wy : wx;
+            int base_stride = ss->facing[facing].step_period;
+            int scale = (facing == DIR_UP || facing == DIR_DOWN)
+                       ? ew->scale_y : ew->scale_x;
+            if (base_stride <= 0) base_stride = 1;
+            int sub = stride_cycle(pos, base_stride, scale, 3, axis);
+            step_idx = parity * 3 + sub;
         } else {
             int base_stride = ss->facing[facing].step_period;
             int scale = (facing == DIR_UP || facing == DIR_DOWN)
@@ -5457,19 +5686,16 @@ static void editor_render_walktable(int16_t wx, int16_t wy, int facing,
     }
     snprintf(buf, sizeof(buf), "step %d/%d  ->  frame_idx %d",
              step_idx, ew->count, frame_idx);
-    editor_blit_str(row++, 0, buf, 255, 255, 255, false);
+    editor_blit_str(row++, thumb_grid_w, buf, 255, 255, 255, false);
 
-    /* Per-frame placement offset (read from the shadow for the
-     * currently displayed frame).  i/j/k/l tunes this live; S saves
-     * it back to the SpriteFrame initializer in sprites.h. */
-    if (g_editor_entity >= 0 && g_editor_entity < NUM_ENTITY_TYPES
-        && frame_idx >= 0 && frame_idx < EDITOR_MAX_FRAMES) {
-        EditorFrameOffset* efo =
-            &g_editor_frame_offsets[g_editor_entity][frame_idx];
+    /* Per-frame placement offset (read directly from the SpriteFrame).
+     * i/j/k/l modifies sf->ox/sf->oy in-place; S saves to sprites.h. */
+    if (sf && frame_idx >= 0 && frame_idx < ss->total_frames) {
+        const SpriteFrame* tf = &ss->frames[frame_idx];
         snprintf(buf, sizeof(buf),
                  "frame %d: ox=%d  oy=%d   (i/k oy, j/l ox)",
-                 frame_idx, efo->ox, efo->oy);
-        editor_blit_str(row++, 0, buf, 255, 200, 100, false);
+                 frame_idx, tf->ox, tf->oy);
+        editor_blit_str(row++, thumb_grid_w, buf, 255, 200, 100, false);
     }
 
     /* Scale values (read from the shadow for the active facing).
@@ -5480,7 +5706,7 @@ static void editor_render_walktable(int16_t wx, int16_t wy, int facing,
              "scale_x=%d  scale_y=%d   (+/- tunes %s,  bigger=faster)",
              ew->scale_x, ew->scale_y,
              (facing == DIR_UP || facing == DIR_DOWN) ? "Y" : "X");
-    editor_blit_str(row++, 0, buf, 180, 180, 255, false);
+    editor_blit_str(row++, thumb_grid_w, buf, 180, 180, 255, false);
 
     /* Full walk array for current facing */
     char arr[EDITOR_MAX_WALK_LEN * 6 + 32];
@@ -5498,44 +5724,241 @@ static void editor_render_walktable(int16_t wx, int16_t wy, int facing,
                         (i + 1 < ew->count) ? "," : " ");
     }
     pos += snprintf(arr + pos, sizeof(arr) - pos, "]");
-    editor_blit_str(row++, 0, arr, 220, 220, 220, false);
+    editor_blit_str(row++, thumb_grid_w, arr, 220, 220, 220, false);
 
     /* Help line.  The 'v' variant-cycle hint is only relevant for
      * ENT_HUMAN (the only entity with sub-variants); we always show
      * it for simplicity since the key is a no-op for other types. */
-    editor_blit_str(row++, 0,
+    editor_blit_str(row++, thumb_grid_w,
         "qwe/asd/zxc move  Tab facing  v variant  Enter edit  +/- scale  i/j/k/l offset  S save  ESC back",
         120, 120, 120, false);
 
-    /* 3. Thumbnail grid (right side).
-     * 3 columns, each cell ~ (right_width/3) wide.
-     * Show frame index above each thumbnail.  Highlight the currently
-     * selected frame_idx (the one the live sprite is showing). */
-    int thumb_left = g_term_cols - 32;
-    if (thumb_left < 50) thumb_left = 50;
-    int thumb_cols = 3;
-    int thumb_cell_w = (g_term_cols - thumb_left) / thumb_cols;
-    int thumb_cell_h = 8;   /* 1 label + 1 spacing + up to 6 sprite rows */
-    int thumb_top = 0;
-    int max_thumbs = thumb_cols * (g_term_rows / thumb_cell_h);
-    int total = ss->total_frames;
-    if (total > max_thumbs) total = max_thumbs;
+    /* 3. Thumbnail grid organized by walk-animation sequences.
+     * Left side, priority.  Each facing's walk frames are displayed as
+     * a horizontal row (left-to-right), stacked vertically:
+     *   Row group 1: N (DIR_UP) walk frames
+     *   Row group 2: S (DIR_DOWN) walk frames
+     *   Row group 3: W (DIR_LEFT) walk frames
+     *   Row group 4: E (DIR_RIGHT) walk frames
+     *   Row group 5: untagged frames (not in any walk array)
+     *
+     * Each cell = (cell_w x cell_h) with grey border (bg=55,55,55).
+     * Label = [frame_idx].  Active frame highlighted green+inverted.
+     * A sequence that exceeds thumb_cols_count wraps to additional rows
+     * within its group; each group always starts on a fresh row.
+     *
+     * Layout per cell (computed near top of function):
+     *   Row 0: [N] label
+     *   Row 1: grey border top
+     *   Rows 2..max_fh+1: sprite rows
+     *   Row max_fh+2: grey border bottom
+     *   Total cell height = max_fh + 3, width = max_fw + 2
+     */
+    {
+        /* Gather walk-sequence membership to identify untagged frames. */
+        bool frame_used[EDITOR_MAX_FRAMES];
+        memset(frame_used, 0, sizeof(frame_used));
+        for (int f = 0; f < 4; f++) {
+            EditorWalk* ew = &g_editor_walks[g_editor_entity][f];
+            for (int j = 0; j < ew->count && j < EDITOR_MAX_WALK_LEN; j++) {
+                int fi = ew->indices[j];
+                if (fi >= 0 && fi < EDITOR_MAX_FRAMES) frame_used[fi] = true;
+            }
+        }
 
-    for (int i = 0; i < total; i++) {
-        int cx = i % thumb_cols;
-        int cy = i / thumb_cols;
-        int tl = thumb_left + cx * thumb_cell_w;
-        int tt = thumb_top + cy * thumb_cell_h;
-        char lab[16];
-        snprintf(lab, sizeof(lab), "[%d]", i);
-        bool hot = (i == frame_idx);
-        editor_blit_str(tt, tl, lab,
-                        hot ? 0 : 180,
-                        hot ? 255 : 180,
-                        hot ? 0 : 180,
-                        hot);
-        const SpriteFrame* tf = &ss->frames[i];
-        if (tf) render_sprite_frame(tf, tl, tt + 1);
+        /* Facing labels for the row-group headers. */
+        const char* group_label[4] = {"N", "S", "W", "E"};
+
+        /* cur_row tracks absolute terminal rows.
+         * Each group: 1 label row + group_rows * g_cell_h.
+         * Label is immediately above the first cell row. */
+        int cur_row = 0;
+
+        /* Nudge: sprite pixels start this many cols/rows inside the
+         * content area (after border).  x=2,y=1 from inner edge. */
+        const int NUDGE_X = 2;
+        const int NUDGE_Y = 1;
+
+        /* Walk-sequence groups: N, S, W, E (DIR_UP..DIR_RIGHT). */
+        for (int fg = 0; fg < 4; fg++) {
+            EditorWalk* ew = &g_editor_walks[g_editor_entity][fg];
+            if (ew->count <= 0) continue;
+
+            /* Compute bounding box of all frames in this group,
+             * INCLUDING their per-frame ox/oy offsets.
+             *
+             * Each frame's effective position relative to cell origin:
+             *   left  = (1 + NUDGE_X) - tf->ox   (1 for left border)
+             *   top   = (2 + NUDGE_Y) - tf->oy   (2 for label+top border)
+             *   right  = left + tf->w - 1
+             *   bottom = top  + tf->h - 1
+             */
+            int bb_min_left = 999, bb_max_right = -1;
+            int bb_min_top  = 999, bb_max_bottom = -1;
+            for (int j = 0; j < ew->count; j++) {
+                int fi = ew->indices[j];
+                if (fi < 0 || fi >= ss->total_frames) continue;
+                const SpriteFrame* f = &ss->frames[fi];
+                if (!f) continue;
+                int el = (1 + NUDGE_X) - f->ox;
+                int er = el + f->w - 1;
+                int et = (2 + NUDGE_Y) - f->oy;
+                int eb = et + f->h - 1;
+                if (el < bb_min_left)  bb_min_left  = el;
+                if (er > bb_max_right) bb_max_right = er;
+                if (et < bb_min_top)   bb_min_top   = et;
+                if (eb > bb_max_bottom) bb_max_bottom = eb;
+            }
+            if (bb_min_left > bb_max_right)  bb_min_left = bb_max_right = 0;
+            if (bb_min_top  > bb_max_bottom) bb_min_top  = bb_max_bottom = 0;
+            int content_w = bb_max_right - bb_min_left + 1;
+            int content_h = bb_max_bottom - bb_min_top + 1;
+            if (content_w < 1) content_w = 1;
+            if (content_h < 1) content_h = 1;
+            int g_cell_w = content_w + 2;  /* left + right border cols */
+            int g_cell_h = content_h + 3;  /* label + top border + content + bottom border */
+
+            int group_rows = (ew->count + thumb_cols_count - 1)
+                             / thumb_cols_count;
+
+            /* Print facing group label — 1 row above first cell row. */
+            if (cur_row < g_term_rows) {
+                char glab[8];
+                snprintf(glab, sizeof(glab), " %s:", group_label[fg]);
+                editor_blit_str(cur_row, 0, glab, 255, 220, 80, false);
+            }
+            cur_row++;
+
+            /* Render each frame in this walk sequence.
+             * ox/oy offsets are applied so the user sees the effect of
+             * i/j/k/l tuning.  The bounding box ensures all frames fit. */
+            for (int j = 0; j < ew->count; j++) {
+                int fidx = ew->indices[j];
+                if (fidx < 0 || fidx >= ss->total_frames) continue;
+
+                int col = j % thumb_cols_count;
+                int local_row = j / thumb_cols_count;
+                int tl = col * g_cell_w;
+                int tt = cur_row + local_row * g_cell_h;
+                bool hot = (fidx == frame_idx);
+
+                /* Label row: [frame_idx] */
+                char lab[16];
+                snprintf(lab, sizeof(lab), "[%d]", fidx);
+                editor_blit_str(tt, tl, lab,
+                                hot ? 0 : 180,
+                                hot ? 255 : 180,
+                                hot ? 0 : 180,
+                                hot);
+
+                /* Grey border: top row */
+                for (int bx = 0; bx < g_cell_w; bx++)
+                    editor_set_bg(tt + 1, tl + bx, 55, 55, 55);
+
+                /* Grey border: left and right columns (content_h rows) */
+                for (int by = 0; by < content_h; by++) {
+                    editor_set_bg(tt + 2 + by, tl,                  55, 55, 55);
+                    editor_set_bg(tt + 2 + by, tl + content_w + 1,  55, 55, 55);
+                }
+
+                /* Grey border: bottom row */
+                int bot_row = tt + 2 + content_h;
+                for (int bx = 0; bx < g_cell_w; bx++)
+                    editor_set_bg(bot_row, tl + bx, 55, 55, 55);
+
+                /* Render sprite with ox/oy offset, shifted so that
+                 * bb_min_left maps to column tl+1 (after left border)
+                 * and bb_min_top maps to row tt+2 (after top border). */
+                const SpriteFrame* tf = &ss->frames[fidx];
+                if (tf) {
+                    int frame_left  = (1 + NUDGE_X) - tf->ox;
+                    int frame_top   = (2 + NUDGE_Y) - tf->oy;
+                    int sx = tl + (frame_left - bb_min_left);
+                    int sy = tt + (frame_top  - bb_min_top);
+                    render_sprite_frame(tf, sx+1, sy+2); // TODO: Explain the needed shift a bit
+                }
+            }
+
+            /* Advance past cell rows. */
+            cur_row += group_rows * g_cell_h;
+        }
+
+        /* Untagged frames (not referenced by any walk array). */
+        {
+            int untagged[EDITOR_MAX_FRAMES];
+            int untagged_count = 0;
+            for (int i = 0; i < ss->total_frames; i++) {
+                if (!frame_used[i] && untagged_count < EDITOR_MAX_FRAMES)
+                    untagged[untagged_count++] = i;
+            }
+            if (untagged_count > 0) {
+                /* Bounding box for untagged frames (with ox/oy). */
+                int bb_min_left = 999, bb_max_right = -1;
+                int bb_min_top  = 999, bb_max_bottom = -1;
+                for (int j = 0; j < untagged_count; j++) {
+                    const SpriteFrame* f = &ss->frames[untagged[j]];
+                    if (!f) continue;
+                    int el = (1 + NUDGE_X) - f->ox;
+                    int er = el + f->w - 1;
+                    int et = (2 + NUDGE_Y) - f->oy;
+                    int eb = et + f->h - 1;
+                    if (el < bb_min_left)  bb_min_left  = el;
+                    if (er > bb_max_right) bb_max_right = er;
+                    if (et < bb_min_top)   bb_min_top   = et;
+                    if (eb > bb_max_bottom) bb_max_bottom = eb;
+                }
+                if (bb_min_left > bb_max_right)  bb_min_left = bb_max_right = 0;
+                if (bb_min_top  > bb_max_bottom) bb_min_top  = bb_max_bottom = 0;
+                int content_w = bb_max_right - bb_min_left + 1;
+                int content_h = bb_max_bottom - bb_min_top + 1;
+                if (content_w < 1) content_w = 1;
+                if (content_h < 1) content_h = 1;
+                int u_cell_w = content_w + 2;
+                int u_cell_h = content_h + 3;
+
+                if (cur_row < g_term_rows) {
+                    editor_blit_str(cur_row, 0, " misc:",
+                                    255, 220, 80, false);
+                }
+                cur_row++;
+
+                for (int j = 0; j < untagged_count; j++) {
+                    int fidx = untagged[j];
+                    int col = j % thumb_cols_count;
+                    int local_row = j / thumb_cols_count;
+                    int tl = col * u_cell_w;
+                    int tt = cur_row + local_row * u_cell_h;
+                    bool hot = (fidx == frame_idx);
+
+                    char lab[16];
+                    snprintf(lab, sizeof(lab), "[%d]", fidx);
+                    editor_blit_str(tt, tl, lab,
+                                    hot ? 0 : 180,
+                                    hot ? 255 : 180,
+                                    hot ? 0 : 180,
+                                    hot);
+
+                    for (int bx = 0; bx < u_cell_w; bx++)
+                        editor_set_bg(tt + 1, tl + bx, 55, 55, 55);
+                    for (int by = 0; by < content_h; by++) {
+                        editor_set_bg(tt + 2 + by, tl,                  55, 55, 55);
+                        editor_set_bg(tt + 2 + by, tl + content_w + 1,  55, 55, 55);
+                    }
+                    int bot_row = tt + 2 + content_h;
+                    for (int bx = 0; bx < u_cell_w; bx++)
+                        editor_set_bg(bot_row, tl + bx, 55, 55, 55);
+
+                    const SpriteFrame* tf = &ss->frames[fidx];
+                    if (tf) {
+                        int frame_left  = (1 + NUDGE_X) - tf->ox;
+                        int frame_top   = (2 + NUDGE_Y) - tf->oy;
+                        int sx = tl + (frame_left - bb_min_left);
+                        int sy = tt + (frame_top  - bb_min_top);
+                        render_sprite_frame(tf, sx, sy);
+                    }
+                }
+            }
+        }
     }
 
     /* 4. Edit string line (bottom). */
@@ -5555,6 +5978,23 @@ static void editor_render_walktable(int16_t wx, int16_t wy, int facing,
         /* Cursor */
         editor_blit_str(edit_row, edit_cursor, "_",
                         255, 255, 255, true);
+    } else if (g_editor_status_timer > 0) {
+        /* Timed status message (save result).  Green for success,
+         * red for failure.  Fades out by dimming in the last 30 frames. */
+        int bright = 255;
+        if (g_editor_status_timer < 30)
+            bright = (g_editor_status_timer * 255) / 30;
+        bool is_ok = (g_editor_status_msg[0] == 'S');  /* 'Saved' vs 'FAILED' */
+        if (!is_ok && g_editor_status_msg[0] != '\0') {
+            /* FAILED message -- red */
+            editor_blit_str(edit_row, 0, g_editor_status_msg,
+                            bright, bright * 60 / 255, bright * 60 / 255, false);
+        } else {
+            /* Success -- green */
+            editor_blit_str(edit_row, 0, g_editor_status_msg,
+                            bright * 60 / 255, bright, bright * 60 / 255, false);
+        }
+        if (--g_editor_status_timer < 0) g_editor_status_timer = 0;
     } else {
         editor_blit_str(edit_row, 0,
             "Press Enter to edit walk table    S to save to sprites.h",
@@ -5599,7 +6039,7 @@ static void editor_view_walktable(EntityType etype) {
     editor_init_shadow(etype);
 
     /* Start the sprite in the middle of the arena, facing S. */
-    const SpriteSet* ss = editor_get_sprite_set(etype);
+    SpriteSet* ss = editor_get_sprite_set(etype);
     int16_t wx = SCREEN_TO_FIXED(SCREEN_WIDTH / 2);
     int16_t wy = SCREEN_TO_FIXED(SCREEN_HEIGHT / 2);
     int     facing = DIR_DOWN;
@@ -5665,17 +6105,16 @@ static void editor_view_walktable(EntityType etype) {
             /* Normal-mode key handling. */
             EditorWalk* ew_active = &g_editor_walks[etype][facing];
 
-            /* Tab cycles facing N->S->E->W->N. */
+            /* Tab cycles facing N->S->W->E->WH->EH->N. */
             if (g_keys[9]) {
-                facing = (facing + 1) % 4;
+                facing = (facing + 1) % NUM_FACINGS;
                 ew_active = &g_editor_walks[etype][facing];
             }
 
             /* 'v' cycles the human sub-variant (Mommy/Daddy/Mikey) when
              * editing ENT_HUMAN.  This re-binds the active SpriteSet
              * (via editor_get_sprite_set()) and re-initializes the
-             * shadow walk tables + per-frame offsets for the newly-
-             * selected variant.  Other entity types ignore 'v'.
+             * shadow walk tables for the newly-selected variant.  Other entity types ignore 'v'.
              *
              * Why 'v': Tab is taken (facing), Enter is taken (edit
              * string), S is taken (save).  'v' for "variant" is
@@ -5730,20 +6169,28 @@ static void editor_view_walktable(EntityType etype) {
 
             /* S saves to sprites.h. */
             if (g_keys['S']) {
+                const char* label = editor_entity_label(etype);
                 bool ok = editor_save_sprites_h(etype);
-                (void)ok;
+                if (ok) {
+                    snprintf(g_editor_status_msg, sizeof(g_editor_status_msg),
+                             "Saved %s walk tables to sprites.h", label);
+                } else {
+                    snprintf(g_editor_status_msg, sizeof(g_editor_status_msg),
+                             "FAILED to save %s -- check sprites.h exists?", label);
+                }
+                g_editor_status_timer = 120;  /* ~2 seconds at 60fps */
             }
 
             /* i/j/k/l tune the per-frame placement offset (ox, oy) of
              * the currently displayed frame.  Vim-style: i=up, k=down,
-             * j=left, l=right.  Affects only the active frame's shadow
+             * j=left, l=right.  Affects only the active frame's ox/oy
              * entry; S writes it back to sprites.h.
              *
              * We need the current frame_idx (which frame the live
-             * sprite is showing) so we update the right shadow entry.
+             * sprite is showing) so we update the right SpriteFrame.
              * This mirrors the math in editor_render_walktable(). */
             if (g_keys['i'] || g_keys['j'] || g_keys['k'] || g_keys['l']) {
-                const SpriteSet* ss_local = editor_get_sprite_set(etype);
+                SpriteSet* ss_local = editor_get_sprite_set(etype);
                 if (ss_local && ew_active->count > 0) {
                     int step_idx = 0;
                     /* Half-row index computed in one shot from wy
@@ -5757,20 +6204,19 @@ static void editor_view_walktable(EntityType etype) {
                     if (etype == ENT_GRUNT || etype == ENT_ENFORCER) {
                         step_idx = (int)(half_rows & 1);
                     } else if (etype == ENT_SPHEROID) {
-                        /* Spheroid hybrid: bank + sub, mirroring
+                        /* Spheroid positional picker -- mirrors
                          * entity_select_frame()'s ENT_SPHEROID case.
-                         * We recompute the same editor_anim_phase
-                         * formula here (no Entity* to read from in
-                         * the editor key handler -- the live entity
-                         * doesn't exist; we're rendering a phantom
-                         * sprite at the cursor wx,wy).  Must match
-                         * the render path's computation exactly so
-                         * i/j/k/l edits target the frame the user
-                         * sees, not a stale or off-by-one frame. */
-                        int bank = (int)(half_rows & 1);
-                        int sub  = (g_frame_count / SPHEROID_WALK_FRAMES_PER_ADVANCE) % 3;
-                        if (sub < 0) sub += 3;
-                        step_idx = bank * 3 + sub;
+                         * Bank from half-row parity, sub from stride_cycle
+                         * along the movement axis.  Purely positional. */
+                        int parity = (int)(half_rows & 1);
+                        int axis = (facing == DIR_UP || facing == DIR_DOWN) ? 1 : 0;
+                        int16_t pos = axis ? wy : wx;
+                        int base_stride = ss_local->facing[facing].step_period;
+                        int scale = (facing == DIR_UP || facing == DIR_DOWN)
+                                  ? ew_active->scale_y : ew_active->scale_x;
+                        if (base_stride <= 0) base_stride = 1;
+                        int sub = stride_cycle(pos, base_stride, scale, 3, axis);
+                        step_idx = parity * 3 + sub;
                     } else {
                         int base_stride = ss_local->facing[facing].step_period;
                         int scale = (facing == DIR_UP || facing == DIR_DOWN)
@@ -5783,21 +6229,17 @@ static void editor_view_walktable(EntityType etype) {
                     }
                     if (step_idx < 0 || step_idx >= ew_active->count) step_idx = 0;
                     int fidx = ew_active->indices[step_idx];
-                    if (fidx >= 0 && fidx < EDITOR_MAX_FRAMES) {
-                        EditorFrameOffset* efo =
-                            &g_editor_frame_offsets[etype][fidx];
-                        /* Editor keys invert the ox/oy sign relative to
-                         * the rendered offset, because the renderer does
-                         * `tx -= ox; ty -= oy` (hotspot lands ON entity).
-                         * To make the sprite appear to move UP, the
-                         * sprite's top-left must move UP, which means
-                         * `-oy` must decrease, which means oy must
-                         * INCREASE.  Hence 'i' (up) = oy++, etc. */
-                        if (g_keys['i']) efo->oy++;   /* up    = oy++ (sprite top-left moves up) */
-                        if (g_keys['k']) efo->oy--;   /* down  = oy-- (sprite top-left moves down) */
-                        if (g_keys['j']) efo->ox++;   /* left  = ox++ (sprite top-left moves left) */
-                        if (g_keys['l']) efo->ox--;   /* right = ox-- (sprite top-left moves right) */
-                        efo->dirty = true;
+                    if (fidx >= 0 && fidx < ss_local->total_frames) {
+                        /* Modify the SpriteFrame's ox/oy directly (no shadow).
+                         * Sign convention: renderer does tx -= ox, ty -= oy.
+                         * 'i' (up)    = oy++ (sprite top-left moves up)
+                         * 'k' (down)  = oy-- (sprite top-left moves down)
+                         * 'j' (left)  = ox++ (sprite top-left moves left)
+                         * 'l' (right) = ox-- (sprite top-left moves right) */
+                        if (g_keys['i']) ss_local->frames[fidx].oy++;
+                        if (g_keys['k']) ss_local->frames[fidx].oy--;
+                        if (g_keys['j']) ss_local->frames[fidx].ox++;
+                        if (g_keys['l']) ss_local->frames[fidx].ox--;
                     }
                 }
             }
@@ -5820,6 +6262,28 @@ static void editor_view_walktable(EntityType etype) {
 
             wx += dx;
             wy += dy;
+
+            /* Debug log: only when position actually changes */
+            static int16_t last_log_wx = -1, last_log_wy = -1;
+            if (g_debug_log && (wx != last_log_wx || wy != last_log_wy)) {
+                last_log_wx = wx; last_log_wy = wy;
+                int axis = (facing == DIR_UP || facing == DIR_DOWN) ? 1 : 0;
+                int16_t pos = axis ? wy : wx;
+                int32_t hr = (int32_t)wy * ((int32_t)g_term_rows * 2)
+                           / ((int32_t)SCREEN_HEIGHT * COORD_SCALE);
+                int parity = hr & 1;
+                EditorWalk* ew_l = &g_editor_walks[etype][facing];
+                int base_stride = ew_l->count > 0 ? ss->facing[facing].step_period : 1;
+                if (base_stride <= 0) base_stride = 1;
+                int scale = axis ? ew_l->scale_y : ew_l->scale_x;
+                int step_idx_l = stride_cycle(pos, base_stride, scale, ew_l->count, axis);
+                debug_log("%s,%d,%d,%d,%d,%d,%d,%d",
+                          editor_entity_label(etype),
+                          (int)wx, (int)wy,
+                          (int)(hr/2), parity,
+                          step_idx_l, ew_l->count,
+                          ew_l->indices[step_idx_l >= 0 && step_idx_l < ew_l->count ? step_idx_l : 0]);
+            }
             /* Clamp to arena. */
             int16_t margin_x = SCREEN_TO_FIXED(8);
             int16_t margin_y = SCREEN_TO_FIXED(8);
@@ -5881,9 +6345,20 @@ static void editor_mode(void) {
  * in the function) -- left over from an earlier exit-path structure.
  * Safe to remove but kept as a documentation aid for the intended
  * cleanup pattern. */
-int main(int argc, char** argv) {
+int main(int argc, char *argv[]) {
     setlocale(LC_ALL, "en_US.utf8");
     srand((unsigned)time(NULL));
+
+    int start_level = 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-l") == 0 && i + 1 < argc) {
+            start_level = atoi(argv[++i]);
+            if (start_level < 1) start_level = 1;
+        }
+        if (strcmp(argv[i], "-d") == 0) {
+            g_debug_log = true;
+        }
+    }
 
     init_terminal_size();
     init_text_buffer();
@@ -5909,7 +6384,7 @@ int main(int argc, char** argv) {
 
     play_intro_screen();
 
-    restart_game(1);
+    restart_game(start_level);
 
     play_zooming_boxes_text();
 
@@ -5941,11 +6416,9 @@ cleanup:
     printf("  Wave reached: %d\n", g_level);
     printf("  Humans rescued: %d\n\n", g_rescue_count);
     
-    // Print the final score persistently to stdout
-    printf("\n\n  YOUR SCORE: %07d\n\n", g_score);
     
     // Clean up the text buffer
     fini_text_buffer();
     
-    return 0;
+    return g_rescue_count; // return num humans saved to caller
 }
